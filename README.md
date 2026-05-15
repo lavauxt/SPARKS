@@ -22,6 +22,7 @@ if (!require("devtools", quietly = TRUE)) install.packages("devtools")
 
 # Install SPARKS
 devtools::install_github("lavauxt/SPARKS")
+```
 
 ## Quick Start
 
@@ -53,6 +54,7 @@ run_pipeline(
   base_config_path     = "./inst/config_template_human.yaml",
   override_config_path = "./inst/examples/config.yaml"
 )
+```
 
 ## Configuration
 
