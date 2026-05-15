@@ -1,0 +1,40 @@
+Package: SPARKS
+Title: Single-cell Pipeline for Analysis of RNA-seq Systems
+Version: 0.1.0
+Authors@R: person("lavauxt", role = c("aut", "cre"),
+    email = "lavauxt@example.com")
+Description: SPARKS (Single-cell Pipeline for Analysis of RNA-seq Systems) is a modular scRNA-seq pipeline using Seurat, SingleR and scDblFinder.
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+Collate:
+    'analysis.R'
+    'config.R'
+    'pipeline_core.R'
+    'processing.R'
+    'qc_utils.R'
+    'sex_scoring.R'
+    'utils.R'
+    'visualization.R'
+Imports:
+    Seurat (>= 5.0.0),
+    SeuratObject (>= 5.0.0),
+    SingleCellExperiment,
+    scDblFinder,
+    SingleR,
+    tximport,
+    pheatmap,
+    Matrix,
+    ggplot2,
+    dplyr,
+    patchwork,
+    scales,
+    grid,
+    grDevices,
+    stats,
+    utils,
+    yaml,
+    scProportionTest
+Remotes:
+    rpolicastro/scProportionTest,
+RoxygenNote: 8.0.0

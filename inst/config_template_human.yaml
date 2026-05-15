@@ -1,0 +1,152 @@
+# ── Paths ──────────────────────────────────────────────────────────────────────
+pipeline:
+  data_dir:       "./datas"
+  results_dir:    "./results"
+  species_target: "Human" 
+
+# ── Sample table (TSV: folder_id, protocol, comparison_group) ─────────────────
+  sample_table: "./sample_table.tsv"
+
+# ── Species config ─────────────────────────────────────────────────────────────
+# ref_primary / ref_secondary: name of a celldex function (no parentheses)
+# Supported: ImmGenData, MouseRNAseqData, HumanPrimaryCellAtlasData,
+#            BlueprintEncodeData, DatabaseImmuneCellExpressionData,
+#            NovershternHematopoieticData, MonacoImmuneData
+species:
+  gene_removal_pattern: "^RPS|^RPL|^HBA[12]?|^HBB$"
+  mt_pattern:           "^MT-"     
+  genes_to_remove: ""
+  ref_primary:   "HumanPrimaryCellAtlasData"
+  ref_secondary: "BlueprintEncodeData"
+
+sex_scoring:
+  run: true
+  regress: true
+  markers:
+    female: ["XIST", "TSIX"]
+    male: ["DDX3Y", "PRKY", "KDM5D", "RPS4Y1", "UTY", "USP9Y"]
+
+cell_cycle:
+  run: true
+  regress: true
+
+# ── QC filters ─────────────────────────────────────────────────────────────────
+qc:
+  min_features:   200
+  max_counts:     30000
+  max_mt_percent: 10
+
+# ── Seurat processing ──────────────────────────────────────────────────────────
+processing:
+  vars_to_regress: ["percent.mt"]
+  pca_dims_from:      1
+  pca_dims_to:        21
+  cluster_resolution: 0.5
+  n_elbow_dims:       50
+  cluster_col:        "seurat_clusters"
+  condition_col:      "condition"
+  reduction:          "umap"
+
+# ── DEG ────────────────────────────────────────────────────────────────────────
+deg:
+  logfc_threshold:     0.25
+  min_pct:             0.1
+  min_cells_per_group: 10
+  min_p_val_adj:       0.01
+  min_deg_display:     10
+
+# ── SingleR ────────────────────────────────────────────────────────────────────
+singler:
+  labels:
+    - name:      "singleR_labels_main"
+      ref_field: "label.main"
+      is_fine:   false
+    - name:      "singleR_labels_fine"
+      ref_field: "label.fine"
+      is_fine:   true
+  min_cells_per_group: 10
+
+# ── Cell labeling ──────────────────────────────────────────────────────────────
+labeling:
+  marker_positive_threshold: 0.1
+  min_subset_cells:          20
+
+# ── Plot dimensions ────────────────────────────────────────────────────────────
+plot:
+  umap_width_standard:  14
+  umap_height_standard: 7
+  umap_width_fine:      16
+  umap_height_fine:     14
+
+# ── Genes ──────────────────────────────────────────────────────────────────────
+genes:
+  genes_to_plot:
+    - "CD3E"
+    - "CD8A"
+    - "COL1A1"
+  corr_genes_x:
+    - "CD8A"
+    - "CD4"
+    - "FOXP3"
+  corr_genes_y:
+    - "COL1A1"
+    - "ACTA2"
+    - "PDGFRA"
+
+# ── Main groupings (null = auto: seurat_clusters + singler label_cols) ─────────
+groupings_main: ~
+
+# ── Subsets ────────────────────────────────────────────────────────────────────
+subsets:
+  - display_name:  "T_Cells"
+    match_col:     "singleR_labels_main"
+    pattern:
+      - "T cells"
+      - "NK cells"
+    exact_match:   true
+    type_col:      "tcell_type"
+    pca_dims_from: 1
+    pca_dims_to:   15
+    color:         "blue"
+    genes:
+      - "CD3E"
+      - "CD8A"
+      - "CD4"
+      - "FOXP3"
+    label_rules:
+      - label:    "CD8_T"
+        positive: ["CD8A"]
+        negative: ["CD4", "FOXP3"]
+      - label:    "CD4_T"
+        positive: ["CD4"]
+        negative: ["CD8A", "FOXP3"]
+      - label:    "Treg"
+        positive: ["FOXP3", "CD4"]
+        negative: []
+
+  - display_name:  "Fibroblasts"
+    match_col:     "singleR_labels_main"
+    pattern:
+      - "Fibroblasts"
+    exact_match:   true
+    type_col:      "fibroblast_type"
+    pca_dims_from: 1
+    pca_dims_to:   10
+    color:         "darkgreen"
+    genes:
+      - "COL1A1"
+      - "ACTA2"
+      - "PDGFRA"
+    label_rules: []
+
+  - display_name:  "Cluster_7"
+    match_col:     "seurat_clusters"
+    pattern:
+      - "^7$"
+    exact_match:   false
+    type_col:      "cluster_7_subtype"
+    pca_dims_from: 1
+    pca_dims_to:   11
+    deg_color:     "purple"
+    genes:         ~
+    label_rules:   []
