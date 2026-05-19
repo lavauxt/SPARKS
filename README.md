@@ -1,6 +1,23 @@
-# SPARKS
+<p align="center">
+  <img src="assets/logo.png" alt="SPARKS logo" width="350"/>
+</p>
 
-**SPARKS** (Single-cell Pipeline for Analysis of RNA-seq Systems) is a modular R package designed to streamline scRNA-seq analysis. It automates the workflow from raw count matrices (Alevin or Cell Ranger) to cluster identification, sex scoring, and differential expression analysis using **Seurat**, **SingleR**, and **scDblFinder**.
+<h1 align="center">SPARKS</h1>
+
+<p align="center">
+  Single-cell RNA-seq analysis toolkit
+</p>
+
+<p align="center">
+  <a href="https://www.gnu.org/licenses/gpl-3.0">
+    <img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="GPL-3 License"/>
+  </a>
+</p>
+
+**SPARKS** (Single-cell Pipeline for Analysis of RNA-seq Systems) is a modular R package designed to streamline scRNA-seq analysis. It automates the workflow from raw count matrices (Alevin or Cell Ranger) to cluster identification, annotation, sex scoring, and differential expression analysis using **Seurat**, **SingleR**, and **scDblFinder**.
+
+It provides an end-to-end framework for preprocessing, quality control, dimensionality reduction, clustering, visualization, and biological interpretation of single-cell transcriptomics datasets.
+
 Species currently supported: **Human** and **Mouse**.
 
 ## Key Features

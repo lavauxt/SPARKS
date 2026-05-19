@@ -44,7 +44,7 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$cell_cycle$regress <- cfg$cell_cycle$regress %||% FALSE
 
   # ── Gene Removal Defaults ────────────────────────────────────────────
-  cfg$params$genes_to_remove <- cfg$params$genes_to_remove %||% c()
+  cfg$species$genes_to_remove <- cfg$species$genes_to_remove %||% c()
 
   # ── QC Defaults ───────────────────────────────────────────────────────────
   cfg$qc$min_features   <- cfg$qc$min_features   %||% 200L

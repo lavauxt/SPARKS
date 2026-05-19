@@ -228,7 +228,7 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
     )
   }
 
-  fp_dir <- file.path(base_dir, suffix, display_name, "General", "FeaturePlot")
+  fp_dir <- file.path(base_dir, suffix, display_name, "FeaturePlot")
   make_dir(fp_dir)
   generate_feature_plots(seurat_obj, genes_list, fp_dir, display_name)
 }
@@ -405,7 +405,17 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
                     groupings  = groupings, genes_list = subset_cfg$genes,
                     base_dir   = base_dir, suffix = suffix,
                     deg_color  = subset_cfg$deg_color, cfg = cfg)
-
+                    
+  if (!is.null(subset_cfg$genes) && length(subset_cfg$genes) > 0) {
+        message("   --> Generating Subcluster Heatmaps for: ", subset_cfg$display_name)
+        hm_dir <- file.path(base_dir, suffix, subset_cfg$display_name, "Heatmap")
+        generate_subcluster_heatmaps(
+          seurat_obj = sub_obj,
+          genes      = subset_cfg$genes,
+          out_dir    = hm_dir,
+          prefix     = subset_cfg$display_name
+        )
+      }
   rdata_dir <- file.path(base_dir, suffix, "RData")
   .save_rdata(sub_obj, rdata_dir,
     paste0("Subset_",

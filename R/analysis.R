@@ -453,31 +453,57 @@ run_gene_correlations <- function(seurat_obj,
 
         all_cors[[grp_cond_label]] <- cor_df
 
-        tryCatch({
+       
+tryCatch({
           clean_label <- gsub("[^A-Za-z0-9]", "_", grp_cond_label)
           out_file <- file.path(corr_dir, paste0("Corr_", method, "_", prefix, "_", clean_label, ".png"))
           
+          n_genes <- nrow(cor_res)
+
+          base_size <- max(2.0, n_genes * 0.22) 
+          
+          dummy_anno <- data.frame(Corr = c(-1, rep(0, n_genes - 2), 1), row.names = rownames(cor_res))
+          anno_colors <- list(Corr = colorRampPalette(c("blue", "white", "red"))(100))
+          
           pheatmap::pheatmap(
             cor_res,
-            main = paste0(toupper(method), " Corr: ", grp, " (", cond, ", N=", n_cells, ")"),
+            main = paste0(toupper(method), " Corr: ", grp, "\n(", cond, ", N=", n_cells, ")"),
             filename = out_file,
-            display_numbers = (nrow(cor_res) < 20),
+            display_numbers = (n_genes < 20),
             color = colorRampPalette(c("blue", "white", "red"))(100),
             breaks = seq(-1, 1, length.out = 100),
             cluster_rows = FALSE,
             cluster_cols = FALSE,
-            width = 6,
-            height = 5
+            
+
+            width = base_size + 0.7,  
+            height = base_size,
+            
+
+            fontsize = 5,             
+            fontsize_row = 7.0,      
+            fontsize_col = 7.0,       
+            fontsize_number = 5.0,    
+            
+            legend = FALSE,         
+            
+
+            annotation_row = dummy_anno,
+            annotation_colors = anno_colors,
+            annotation_legend = TRUE, 
+            annotation_names_row = FALSE, 
+            show_rownames = TRUE,
+            show_colnames = TRUE
           )
         }, error = function(e) {
           message(" -> Heatmap skipped for ", grp_cond_label, ": ", e$message)
         })
-        
-      } else {
-        message(paste("Skipping:", grp_cond_label, "| Insufficient cells (N =", n_cells, ")"))
-      }
-    }
-  }
+                
+              } else {
+                message(paste("Skipping:", grp_cond_label, "| Insufficient cells (N =", n_cells, ")"))
+              }
+            }
+          }
 
   if (length(all_cors) > 0) {
     final_df <- do.call(rbind, all_cors)
