@@ -2,7 +2,7 @@
 % Please edit documentation in R/analysis.R
 \name{save_average_expression}
 \alias{save_average_expression}
-\title{Compute and save average expression per group × condition}
+\title{Compute and save average expression per group x condition}
 \usage{
 save_average_expression(
   seurat_obj,

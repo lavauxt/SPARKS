@@ -2,7 +2,7 @@
 % Please edit documentation in R/analysis.R
 \name{run_proportion_analysis}
 \alias{run_proportion_analysis}
-\title{Compute cell type proportion table and chi-squared test}
+\title{Compute cell type proportion table and chi squared test}
 \usage{
 run_proportion_analysis(seurat_obj, grouping_col, output_dir, file_prefix)
 }
@@ -16,5 +16,5 @@ run_proportion_analysis(seurat_obj, grouping_col, output_dir, file_prefix)
 \item{file_prefix}{Character}
 }
 \description{
-Compute cell type proportion table and chi-squared test
+Compute cell type proportion table and chi squared test
 }

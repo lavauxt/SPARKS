@@ -1,6 +1,11 @@
 pipeline:
   data_dir:       "./data/RANK"
   results_dir:    "./results_RANK"
-  sample_table: "./data/sample_table.tsv"
-species:
-  genes_to_remove: ""
+  sample_table: "./data/RANK/sample_table.tsv"
+
+sex_scoring:
+  run: false
+  regress: false
+cell_cycle:
+  run: false
+  regress: false

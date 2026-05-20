@@ -2,7 +2,7 @@
 % Please edit documentation in R/visualization.R
 \name{generate_expression_heatmap}
 \alias{generate_expression_heatmap}
-\title{Average-expression heatmap (pheatmap) per group × condition}
+\title{Average-expression heatmap (pheatmap) per group x condition}
 \usage{
 generate_expression_heatmap(
   seurat_obj,

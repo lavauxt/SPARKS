@@ -354,3 +354,103 @@ generate_top_expressed_genes <- function(seurat_obj, group_by_col,
               paste0("TopExpressed_", prefix, "_", group_by_col, ".txt")))
   invisible(NULL)
 }
+
+#' Generate Subcluster Heatmaps (Per Cell and Aggregated)
+#'
+#' @param seurat_obj Seurat object
+#' @param genes Vector of genes to plot
+#' @param out_dir Output directory path
+#' @param prefix Prefix for the file names
+#' @export
+generate_subcluster_heatmaps <- function(seurat_obj, genes, out_dir, prefix) {
+  make_dir(out_dir)
+  
+  genes <- .filter_present_genes(genes, seurat_obj, "Subcluster Heatmaps")
+  if (is.null(genes) || length(genes) < 2) {
+    message("   [SKIP] Not enough valid genes for Subcluster Heatmap: ", prefix)
+    return(invisible(NULL))
+  }
+
+  # ---------------------------------------------------------
+  # 1. Per-Cell Heatmap (DoHeatmap)
+  # ---------------------------------------------------------
+  seurat_obj <- Seurat::ScaleData(seurat_obj, features = genes, verbose = FALSE)
+  p_cell <- Seurat::DoHeatmap(
+    seurat_obj, 
+    features = genes, 
+    group.by = "condition", 
+    angle = 0, 
+    size = 4
+  ) +
+    ggplot2::scale_fill_gradient2(
+      low = "blue", mid = "white", high = "red", 
+      midpoint = 0, name = "z-score"
+    ) +
+    ggplot2::guides(color = "none") + 
+    ggplot2::ggtitle(paste0(prefix, " - z-score per cell")) +
+    ggplot2::theme(axis.text.y = ggplot2::element_text(size = 10))
+
+  ggplot2::ggsave(
+    file.path(out_dir, paste0(prefix, "_Heatmap_PerCell.png")), 
+    plot = p_cell, width = 10, height = 8
+  )
+
+  # ---------------------------------------------------------
+  # 2. Aggregated Heatmap (ggplot2)
+  # ---------------------------------------------------------
+  mat <- Seurat::GetAssayData(seurat_obj, assay = Seurat::DefaultAssay(seurat_obj), layer = "scale.data")
+  mat <- mat[genes, , drop = FALSE]
+
+  conditions <- seurat_obj$condition
+  
+  agg_mat <- sapply(levels(factor(conditions)), function(cond) {
+    cells <- names(conditions)[conditions == cond]
+    if (length(cells) == 1) return(mat[, cells])
+    if (length(cells) == 0) return(rep(NA, nrow(mat)))
+    rowMeans(mat[, cells, drop = FALSE], na.rm = TRUE)
+  })
+  
+  df_long <- as.data.frame(agg_mat)
+  df_long$gene <- rownames(df_long)
+  df_long <- tidyr::pivot_longer(df_long, cols = -gene, names_to = "Condition", values_to = "z_score")
+
+  df_long$Condition <- factor(df_long$Condition, levels = levels(factor(conditions)))
+  df_long$gene      <- factor(df_long$gene, levels = rev(genes))
+
+  p_agg <- ggplot2::ggplot(df_long, ggplot2::aes(x = Condition, y = gene, fill = z_score)) +
+    ggplot2::geom_tile(color = "white", linewidth = 0.5) +
+    ggplot2::scale_fill_gradient2(
+      low = "blue", mid = "white", high = "red", midpoint = 0,
+      name = "z-score",
+      breaks = c(-2, -1, -0.5, 0, 0.5, 1, 2),
+      labels = c("-2", "-1", "-0.5", "0", "0.5", "1", "2"),
+      limits = c(-2, 2),
+      oob = scales::squish,
+      guide = ggplot2::guide_colorbar(
+        title.position = "top", 
+        title.hjust = 0.5
+      )
+    ) +
+    ggplot2::scale_x_discrete(position = "top") + 
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      axis.text.x      = ggplot2::element_text(face = "bold", size = 11),
+      axis.text.y      = ggplot2::element_text(face = "italic", size = 10),
+      panel.grid       = ggplot2::element_blank(),
+      plot.title       = ggplot2::element_text(hjust = 0.5, face = "bold"),
+      legend.position  = "right",
+      legend.title     = ggplot2::element_text(size = 10, face = "bold")
+    ) +
+    ggplot2::labs(
+      title = paste0(prefix, " - average z-score"),
+      x = NULL,
+      y = NULL
+    )
+
+  calc_height <- max(4, length(genes) * 0.4)
+
+  ggplot2::ggsave(
+    file.path(out_dir, paste0(prefix, "_Heatmap_Aggregated.png")), 
+    plot = p_agg, width = 5, height = calc_height
+  )
+}
