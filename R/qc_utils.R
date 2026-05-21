@@ -56,7 +56,7 @@ generate_qc_plots <- function(so, qc_dir, prefix, cfg) {
   vln <- safe_run(
     Seurat::VlnPlot(so,
       features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
-      ncol = 3L, pt.size = 0),
+      ncol = 3L, pt.size = 1),
     label = paste0("QC VlnPlot   ", prefix)
   )
   if (!is.null(vln))

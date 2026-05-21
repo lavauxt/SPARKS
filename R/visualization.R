@@ -454,3 +454,73 @@ generate_subcluster_heatmaps <- function(seurat_obj, genes, out_dir, prefix) {
     plot = p_agg, width = 5, height = calc_height
   )
 }
+
+#' Generate Z-scored Heatmap of Top Expressed Genes per Cluster
+#'
+#' @param seurat_obj Seurat object
+#' @param group_by_col Character. Metadata column for clusters (e.g. "seurat_clusters")
+#' @param out_dir Character. Output directory
+#' @param prefix Character. Prefix for file names
+#' @param species_target Character. "Mouse" or "Human" to filter junk genes
+#' @param top_n Integer. Number of top genes to select per cluster
+#' @return NULL
+#' @export
+generate_cluster_zscore_heatmap <- function(seurat_obj, group_by_col, out_dir, prefix,
+                                            species_target = "Mouse", top_n = 10L) {
+  
+  if (!requireNamespace("pheatmap", quietly = TRUE)) {
+    message("   [SKIP Z-Score Heatmap] pheatmap not installed")
+    return(invisible(NULL))
+  }
+  
+  groups <- get_valid_groups(seurat_obj@meta.data, group_by_col)
+  if (length(groups) < 2L) {
+    message("   [SKIP Z-Score Heatmap] fewer than 2 valid groups in '", group_by_col, "'")
+    return(invisible(NULL))
+  }
+
+  Seurat::Idents(seurat_obj) <- group_by_col
+  avg <- get_avg_expr(seurat_obj, layer = "data")
+  if (is.null(avg) || nrow(avg) == 0L) return(invisible(NULL))
+  junk_pat <- get_junk_pattern(species_target)
+  avg_filt <- avg[!grepl(junk_pat, rownames(avg)), , drop = FALSE]
+  if (nrow(avg_filt) < 2L) return(invisible(NULL))
+  top_genes <- unique(unlist(lapply(seq_len(ncol(avg_filt)), function(i) {
+    n <- min(top_n, nrow(avg_filt))
+    names(sort(avg_filt[, i], decreasing = TRUE)[seq_len(n)])
+  })))
+  
+  if (length(top_genes) < 2L) return(invisible(NULL))
+
+  breaks_list <- seq(-2, 2, by = 0.04)
+  color_pal   <- grDevices::colorRampPalette(c("blue", "white", "red"))(length(breaks_list))
+
+  ph <- safe_run(
+    pheatmap::pheatmap(
+      as.matrix(avg_filt[top_genes, , drop = FALSE]),
+      scale         = "row",            
+      cluster_cols  = TRUE,            
+      cluster_rows  = TRUE,
+      show_rownames = TRUE,
+      fontsize_row  = max(5, 12 - length(top_genes)/15),
+      main          = paste0("Top ", top_n, " Avg Genes (Z-Scored) | ", prefix, " | ", group_by_col),
+      color         = color_pal,
+      breaks        = breaks_list,
+      silent        = TRUE
+    ),
+    label = "pheatmap z-score heatmap"
+  )
+  
+  if (is.null(ph)) return(invisible(NULL))
+
+  make_dir(out_dir)
+  
+  calc_height <- max(6, length(top_genes) * 0.15)
+  calc_width  <- max(6, length(groups) * 0.5 + 2)
+
+  save_png(ph$gtable,
+    file.path(out_dir, paste0("ZScore_TopGenes_", prefix, "_", group_by_col, ".png")),
+    width = calc_width, height = calc_height)
+    
+  invisible(NULL)
+}

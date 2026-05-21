@@ -339,7 +339,6 @@ prop_test_result <- tryCatch({
     )
   }, error = function(e) {
     message("   [ERROR] scProportionTest failed: ", e$message)
-    message("   [ERROR] scProportionTest failed: ", e$message)
     message("   DEBUG: Object class is ", class(seurat_obj))
     message("   DEBUG: Conditions are: ", paste(conditions, collapse=" vs "))
     return(NULL)
@@ -436,7 +435,7 @@ run_gene_correlations <- function(seurat_obj,
       n_cells <- length(cells)
       grp_cond_label <- paste0(grp, "_", cond)
 
-      if (n_cells >= 5) {
+      if (n_cells >= 30) {
         message(paste("Processing Cluster:", grp, "| Cond:", cond, "| n:", n_cells))
         mat_x <- t(as.matrix(expr[valid_genes_x, cells, drop = FALSE]))
         mat_y <- t(as.matrix(expr[valid_genes_y, cells, drop = FALSE]))

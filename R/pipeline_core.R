@@ -6,6 +6,24 @@
 #' @export
 run_pipeline <- function(base_config_path, override_config_path = NULL, sample_metadata = NULL) {
   cfg <- load_pipeline_config(base_config_path, override_config_path)
+  
+  if (isTRUE(cfg$parallel$enable)) {
+    if (!requireNamespace("future", quietly = TRUE)) {
+      stop("The 'future' package is required for parallelization. Please run: install.packages('future')")
+    }
+    
+    message("   [Parallelization] Setting up ", cfg$parallel$workers, 
+            " workers using strategy: ", cfg$parallel$strategy)
+            
+    future::plan(strategy = cfg$parallel$strategy, workers = cfg$parallel$workers)
+    options(future.globals.maxSize = cfg$parallel$max_size_gb * 1024^3)
+    
+    on.exit({
+      message("   [Parallelization] Reverting to sequential execution and closing workers...")
+      future::plan("sequential")
+    }, add = TRUE)
+  }
+
   if (is.null(sample_metadata)) {
     message("   [INFO] No sample_metadata argument provided. Loading from YAML config...")
     sample_metadata <- load_sample_table(cfg)
@@ -334,6 +352,11 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
 
   # ── Heatmaps ──────────────────────────────────────────────────────────────
   generate_cluster_markers_and_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix)
+
+  generate_cluster_zscore_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix,
+                                  species_target = cfg$pipeline$species_target,
+                                  top_n          = cfg$plot$top_genes_heatmap_n)
+  
   generate_expression_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix,
                                species_target = cfg$pipeline$species_target)
   generate_top_expressed_genes(seurat_obj, group_col, dirs$Heatmap, file_prefix)

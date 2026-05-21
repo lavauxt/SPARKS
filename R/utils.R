@@ -60,7 +60,7 @@ save_png <- function(p, filename, width = 8, height = 6, dpi = 300) {
     grDevices::dev.off()
   } else {
     suppressMessages(
-      ggplot2::ggsave(filename, plot = p, width = width, height = height, dpi = dpi)
+      ggplot2::ggsave(filename, plot = p, width = width, height = height, dpi = dpi, bg = "white")
     )
   }
   invisible(NULL)

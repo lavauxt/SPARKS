@@ -65,6 +65,7 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$deg$table_row_names     <- cfg$deg$table_row_names     %||% FALSE
 
   # ── Plotting Defaults ─────────────────────────────────────────────────────
+  cfg$plot$top_genes_heatmap_n  <- cfg$plot$top_genes_heatmap_n  %||% 10L
   cfg$plot$umap_width_standard  <- cfg$plot$umap_width_standard  %||% 14
   cfg$plot$umap_height_standard <- cfg$plot$umap_height_standard %||% 7
   cfg$plot$umap_width_fine      <- cfg$plot$umap_width_fine      %||% 20
@@ -97,6 +98,12 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$subsets            <- cfg$subsets            %||% list()
   cfg$genes$corr_genes_x <- cfg$genes$corr_genes_x %||% NULL
   cfg$genes$corr_genes_y <- cfg$genes$corr_genes_y %||% NULL
+
+# ── Parallelization Defaults ──────────────────────────────────────────
+  cfg$parallel$enable           <- cfg$parallel$enable           %||% FALSE
+  cfg$parallel$workers          <- cfg$parallel$workers          %||% 4L
+  cfg$parallel$strategy         <- cfg$parallel$strategy         %||% "multisession"
+  cfg$parallel$max_size_gb      <- cfg$parallel$max_size_gb      %||% 8.0
 
   return(cfg)
 }

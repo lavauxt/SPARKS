@@ -49,22 +49,12 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
   message("\n--- Processing Sample: ", file_prefix, " ---")
   make_dir(qc_dir)
 
-   cnts <- safe_run(.load_counts(folder_id, data_path),
+  cnts <- safe_run(.load_counts(folder_id, data_path),
                    label = paste0("load_counts: ", folder_id))
   
   if (is.null(cnts)) {
     message(" [!] Error: Could not load counts for ", folder_id)
     return(NULL)
-  }
-
-  manual_list <- genes_to_remove %||% c()
-  pattern_hits <- rownames(cnts)[grep(gene_removal_pattern, rownames(cnts))]
-  to_remove    <- unique(c(pattern_hits, manual_list))
-  present_to_remove <- intersect(to_remove, rownames(cnts))
-  
-  if (length(present_to_remove) > 0) {
-    cnts <- cnts[!rownames(cnts) %in% present_to_remove, , drop = FALSE]
-    message(" -> Filtered ", length(present_to_remove), " genes (pattern + manual list).")
   }
 
   message(" -> Creating Seurat object...")
@@ -77,6 +67,7 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
 
   so$orig.ident      <- file_prefix
   so$condition       <- protocol
+  
   so[["percent.mt"]] <- Seurat::PercentageFeatureSet(so, pattern = mt_pattern)
 
   message(" -> Generating pre-filtering QC plots...")
@@ -84,7 +75,6 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
 
   save_cell_counts(so, paste0("before_filtering_", file_prefix), qc_dir)
 
-  # QC filtering
   so <- subset(so,
     subset = nFeature_RNA > min_features &
              nCount_RNA   < max_counts   &
@@ -95,10 +85,20 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
     return(NULL)
   }
 
+  manual_list <- genes_to_remove %||% c()
+  pattern_hits <- rownames(so)[grep(gene_removal_pattern, rownames(so))]
+  to_remove    <- unique(c(pattern_hits, manual_list))
+  present_to_remove <- intersect(to_remove, rownames(so))
+  
+  if (length(present_to_remove) > 0) {
+    genes_to_keep <- setdiff(rownames(so), present_to_remove)
+    so <- subset(so, features = genes_to_keep)
+    message(" -> Filtered ", length(present_to_remove), " genes (pattern + manual list) after QC.")
+  }
+
   Seurat::DefaultAssay(so) <- "RNA"
   so <- SeuratObject::JoinLayers(so)
 
-  # Doublet removal 
   n_before <- ncol(so)
   so <- safe_run({
     sce <- scDblFinder::scDblFinder(
@@ -132,27 +132,31 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
   so
 }
 
-#' SCTransform + PCA + UMAP + clustering (Seurat v5)
+#' SCTransform + PCA + Integration + UMAP + clustering (Seurat v5)
 #' @param seurat_obj Seurat object
 #' @param dims_pca Integer vector
 #' @param resolution Numeric
 #' @param npcs Integer
 #' @param vars_to_regress Character vector of metadata columns to regress
+#' @param split_by Character. Metadata column to split layers for batch integration
 #' @return Processed Seurat object
 #' @export
 run_seurat_processing <- function(seurat_obj, 
                                   dims_pca = 1:20,
                                   resolution = 0.5,
                                   npcs       = 50L,
-                                  vars_to_regress = "percent.mt") { 
+                                  vars_to_regress = "percent.mt",
+                                  split_by   = "orig.ident") { 
   
   if (ncol(seurat_obj) < 10L) stop("Too few cells: ", ncol(seurat_obj))
 
   Seurat::DefaultAssay(seurat_obj) <- "RNA"
-  seurat_obj <- SeuratObject::JoinLayers(seurat_obj)
+
+
+  message("   [Integration] Splitting RNA assay by: ", split_by)
+  seurat_obj[["RNA"]] <- split(seurat_obj[["RNA"]], f = seurat_obj[[split_by]])
 
   message("   [SCTransform] Regressing variables: ", paste(vars_to_regress, collapse = ", "))
-
   seurat_obj <- Seurat::SCTransform(
     seurat_obj,
     assay           = "RNA",
@@ -172,11 +176,30 @@ run_seurat_processing <- function(seurat_obj,
     actual_dims <- seq_len(actual_npcs)
   }
 
-  seurat_obj <- Seurat::RunUMAP(seurat_obj, reduction = "pca", dims = actual_dims, verbose = FALSE)
-  seurat_obj <- Seurat::FindNeighbors(seurat_obj, reduction = "pca", dims = actual_dims, verbose = FALSE)
+  message("   [Integration] Running IntegrateLayers with Harmony...")
+  if (!requireNamespace("harmony", quietly = TRUE)) {
+    warning("The 'harmony' package is missing. Please run: install.packages('harmony')")
+  }
+  
+  seurat_obj <- Seurat::IntegrateLayers(
+    object         = seurat_obj,
+    method         = Seurat::HarmonyIntegration, 
+    orig.reduction = "pca",
+    new.reduction  = "integrated.dr", 
+    assay          = "SCT",
+    verbose        = FALSE
+  )
+
+  message("   [Integration] Rejoining layers...")
+  seurat_obj[["RNA"]] <- SeuratObject::JoinLayers(seurat_obj[["RNA"]])
+  seurat_obj[["SCT"]] <- SeuratObject::JoinLayers(seurat_obj[["SCT"]])
+
+  message("   [Clustering] Running UMAP and FindNeighbors on integrated.dr...")
+  seurat_obj <- Seurat::RunUMAP(seurat_obj, reduction = "integrated.dr", dims = actual_dims, verbose = FALSE)
+  seurat_obj <- Seurat::FindNeighbors(seurat_obj, reduction = "integrated.dr", dims = actual_dims, verbose = FALSE)
   seurat_obj <- Seurat::FindClusters(seurat_obj, resolution = resolution, verbose = FALSE)
   
-  seurat_obj
+  return(seurat_obj)
 }
 
 #' Assign cell-type labels using positive/negative marker gene rules

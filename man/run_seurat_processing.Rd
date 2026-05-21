@@ -2,14 +2,15 @@
 % Please edit documentation in R/processing.R
 \name{run_seurat_processing}
 \alias{run_seurat_processing}
-\title{SCTransform + PCA + UMAP + clustering (Seurat v5)}
+\title{SCTransform + PCA + Integration + UMAP + clustering (Seurat v5)}
 \usage{
 run_seurat_processing(
   seurat_obj,
   dims_pca = 1:20,
   resolution = 0.5,
   npcs = 50L,
-  vars_to_regress = "percent.mt"
+  vars_to_regress = "percent.mt",
+  split_by = "orig.ident"
 )
 }
 \arguments{
@@ -22,10 +23,12 @@ run_seurat_processing(
 \item{npcs}{Integer}
 
 \item{vars_to_regress}{Character vector of metadata columns to regress}
+
+\item{split_by}{Character. Metadata column to split layers for batch integration}
 }
 \value{
 Processed Seurat object
 }
 \description{
-SCTransform + PCA + UMAP + clustering (Seurat v5)
+SCTransform + PCA + Integration + UMAP + clustering (Seurat v5)
 }
