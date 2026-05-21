@@ -437,68 +437,78 @@ run_gene_correlations <- function(seurat_obj,
       grp_cond_label <- paste0(grp, "_", cond)
 
       if (n_cells >= 5) {
-        message(paste("Processing Cluster:", grp, "| Cond:", cond, "| N:", n_cells))
+        message(paste("Processing Cluster:", grp, "| Cond:", cond, "| n:", n_cells))
         mat_x <- t(as.matrix(expr[valid_genes_x, cells, drop = FALSE]))
         mat_y <- t(as.matrix(expr[valid_genes_y, cells, drop = FALSE]))
-
         cor_res <- suppressWarnings(cor(mat_x, mat_y, method = method))
         cor_res[is.na(cor_res)] <- 0
-
         cor_df <- as.data.frame(as.table(cor_res))
         colnames(cor_df) <- c("Gene_X", "Gene_Y", "Correlation")
         cor_df$Cluster <- grp
         cor_df$Condition <- cond
         cor_df$N_Cells <- n_cells
         cor_df$Method <- method
-
         all_cors[[grp_cond_label]] <- cor_df
+      tryCatch({
+                clean_label <- gsub("[^A-Za-z0-9]", "_", grp_cond_label)
+                out_file <- file.path(corr_dir, paste0("Corr_", method, "_", prefix, "_", clean_label, ".png"))
 
-       
-tryCatch({
-          clean_label <- gsub("[^A-Za-z0-9]", "_", grp_cond_label)
-          out_file <- file.path(corr_dir, paste0("Corr_", method, "_", prefix, "_", clean_label, ".png"))
-          
-          n_genes <- nrow(cor_res)
-
-          base_size <- max(2.0, n_genes * 0.22) 
-          
-          dummy_anno <- data.frame(Corr = c(-1, rep(0, n_genes - 2), 1), row.names = rownames(cor_res))
-          anno_colors <- list(Corr = colorRampPalette(c("blue", "white", "red"))(100))
-          
-          pheatmap::pheatmap(
-            cor_res,
-            main = paste0(toupper(method), " Corr: ", grp, "\n(", cond, ", N=", n_cells, ")"),
-            filename = out_file,
-            display_numbers = (n_genes < 20),
-            color = colorRampPalette(c("blue", "white", "red"))(100),
-            breaks = seq(-1, 1, length.out = 100),
-            cluster_rows = FALSE,
-            cluster_cols = FALSE,
-            
-
-            width = base_size + 0.7,  
-            height = base_size,
-            
-
-            fontsize = 5,             
-            fontsize_row = 7.0,      
-            fontsize_col = 7.0,       
-            fontsize_number = 5.0,    
-            
-            legend = FALSE,         
-            
-
-            annotation_row = dummy_anno,
-            annotation_colors = anno_colors,
-            annotation_legend = TRUE, 
-            annotation_names_row = FALSE, 
-            show_rownames = TRUE,
-            show_colnames = TRUE
-          )
-        }, error = function(e) {
-          message(" -> Heatmap skipped for ", grp_cond_label, ": ", e$message)
-        })
-                
+                p <- ggplot2::ggplot(cor_df, ggplot2::aes(x = Gene_Y, y = Gene_X, fill = Correlation)) +
+                  ggplot2::geom_tile(color = "darkgray", linewidth = 0.6) + 
+                  ggplot2::geom_text(
+                    ggplot2::aes(label = sprintf("%.2f", Correlation)), 
+                    size = 3.8, 
+                    color = "black"
+                  ) +
+                  ggplot2::scale_fill_gradient2(
+                    low = "blue", 
+                    mid = "white", 
+                    high = "red", 
+                    midpoint = 0,
+                    limits = c(-1, 1),
+                    breaks = c(-1, -0.5, 0, 0.5, 1),
+                    labels = c("-1.0", "-0.5", "0.0", "0.5", "1.0"),
+                    guide = ggplot2::guide_colorbar(
+                      title = "Corr",
+                      title.position = "top",
+                      title.hjust = 0.5,
+                      barwidth = ggplot2::unit(0.45, "cm"),
+                      barheight = ggplot2::unit(4.2, "cm"),
+                      ticks.colour = "white",
+                      ticks.linewidth = 0.8
+                    )
+                  ) +
+                  ggplot2::coord_fixed() +
+                  ggplot2::scale_y_discrete(limits = rev(unique(cor_df$Gene_X))) +
+                  ggplot2::scale_x_discrete(limits = unique(cor_df$Gene_Y)) +
+                  ggplot2::theme_minimal() +
+                  ggplot2::labs(
+                    title = paste0(toupper(method), " Corr: ", grp),
+                    subtitle = paste0("(", cond, ", n=", n_cells, ")"),
+                    x = NULL, 
+                    y = NULL
+                  ) +
+                  ggplot2::theme(
+                    plot.title = ggplot2::element_text(face = "bold", size = 15, hjust = 0.5, margin = ggplot2::margin(b = 4)),
+                    plot.subtitle = ggplot2::element_text(size = 11, hjust = 0.5, margin = ggplot2::margin(b = 12)),
+                    axis.text.y = ggplot2::element_text(size = 11, color = "black"),
+                    axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust = 1, size = 11, color = "black"),
+                    panel.grid = ggplot2::element_blank(),
+                    legend.title = ggplot2::element_text(size = 11, face = "bold"),
+                    legend.text = ggplot2::element_text(size = 10),
+                    legend.margin = ggplot2::margin(l = 12)
+                  )
+                ggplot2::ggsave(
+                  filename = out_file,
+                  plot = p,
+                  width = 5.6, 
+                  height = 4.6,
+                  dpi = 300,
+                  bg = "white"
+                )
+              }, error = function(e) {
+                message(" -> Heatmap skipped for ", grp_cond_label, ": ", e$message)
+              })     
               } else {
                 message(paste("Skipping:", grp_cond_label, "| Insufficient cells (N =", n_cells, ")"))
               }
