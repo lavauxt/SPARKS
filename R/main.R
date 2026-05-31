@@ -4,7 +4,7 @@
 #' @param override_config_path Path to your custom override YAML
 #' @param sample_metadata Data frame
 #' @export
-run_pipeline <- function(base_config_path, override_config_path = NULL, sample_metadata = NULL) {
+sparks <- function(base_config_path, override_config_path = NULL, sample_metadata = NULL) {
   cfg <- load_pipeline_config(base_config_path, override_config_path)
   
   if (isTRUE(cfg$parallel$enable)) {

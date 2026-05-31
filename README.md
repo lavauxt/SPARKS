@@ -62,13 +62,13 @@ library(SPARKS)
 
 # Run the complete analysis
 # For mouse
-run_pipeline(
+SPARKS(
   base_config_path     = "./inst/config_template_mouse.yaml",
   override_config_path = "./inst/examples/config.yaml"
 )
 
 # For human
-run_pipeline(
+SPARKS(
   base_config_path     = "./inst/config_template_human.yaml",
   override_config_path = "./inst/examples/config.yaml"
 )
