@@ -1,0 +1,236 @@
+# ── Paths ──────────────────────────────────────────────────────────────────────
+pipeline:
+  data_dir:       "./datas"
+  results_dir:    "./results"
+  species_target: "Mouse"  
+
+# ── Sample table (TSV: folder_id, protocol, comparison_group) ─────────────────
+  sample_table: "./sample_table.tsv"
+
+# ── Species config ─────────────────────────────────────────────────────────────
+# ref_primary / ref_secondary: name of a celldex function (no parentheses)
+# Supported: ImmGenData, MouseRNAseqData, HumanPrimaryCellAtlasData,
+#            BlueprintEncodeData, DatabaseImmuneCellExpressionData,
+#            NovershternHematopoieticData, MonacoImmuneData
+species:
+  gene_removal_pattern: "^(Rps|Rpl|Rrn|Rn|Hb|Gm).*|.*Rik$"
+  mt_pattern:           "^mt-"     
+  genes_to_remove: ["Xist", "Tsix", "Kdm6a", "Eif2s3x", "Ddx3x", "Rps4x", "Prdx4", "Med14", "Zfx", "Ocrl", "Ddx39b", "Gpm6b", "Esr1", "Foxl2", "Wnt4", "Amhr2", "Eda2r", "Eif2s3y", "Ddx3y", "Uty", "Kdm5d", "Sox30", "Sox9", "Amh", "Insl3"]
+  ref_primary:   "ImmGenData"        
+  ref_secondary: "MouseRNAseqData"   
+
+sex_scoring:
+  run: true
+  regress: true
+  markers:
+    female: ["Xist", "Tsix", "Kdm6a", "Eif2s3x", "Ddx3x", "Rps4x"]
+    male: ["Eif2s3y", "Ddx3y", "Uty", "Kdm5d"]
+
+cell_cycle:
+  run: true
+  regress: true
+
+# ── QC ─────────────────────────────────────────────────────────────────────────
+qc:
+  min_features:   200
+  max_counts:     30000
+  max_mt_percent: 10
+  min_cells:      3     # CreateSeuratObject min.cells
+
+# ── Seurat processing ──────────────────────────────────────────────────────────
+processing:
+  vars_to_regress: ["percent.mt"]
+  pca_dims_from:      1
+  pca_dims_to:        20
+  npcs:               50    # ElbowPlot + RunPCA npc
+  cluster_resolution: 0.5
+  n_elbow_dims:       50
+  cluster_col:        "seurat_clusters"
+  condition_col:      "condition"
+  reduction:          "umap"
+
+# ── DEG ────────────────────────────────────────────────────────────────────────
+deg:
+  logfc_threshold:      0.25
+  min_pct:              0.1
+  min_cells_per_group:  10
+  min_p_val_adj:        0.01
+  min_deg_display:      10
+  avg_expression_layers:
+    - "data"
+    - "counts"
+  table_sep:       "\t"
+  table_quote:     false
+  table_row_names: false
+
+# ── SingleR ────────────────────────────────────────────────────────────────────
+singler:
+  unassigned_label:    "Unassigned"
+  min_cells_per_group: 10
+  labels:
+    - name:      "singleR_labels_main"
+      ref_field: "label.main"
+      is_fine:   false
+    - name:      "singleR_labels_fine"
+      ref_field: "label.fine"
+      is_fine:   true
+
+# ── Cell labeling ──────────────────────────────────────────────────────────────
+labeling:
+  marker_positive_threshold: 0.1
+  min_subset_cells:          20
+  unassigned_suffix:         "_Unassigned"
+
+# ── Plot ───────────────────────────────────────────────────────────────────────
+plot:
+  # UMAP (standard groupings)
+  umap_width_standard:  14
+  umap_height_standard: 7
+  # UMAP (fine SingleR labels)
+  umap_width_fine:      16
+  umap_height_fine:     14
+  legend_nrow_fine:     8
+  # DEG UMAP
+  deg_umap_width:       8
+  deg_umap_height:      7
+  deg_umap_point_size:  0.5
+  deg_umap_alpha:       0.6
+  deg_umap_label_size:  4
+  deg_umap_color_low:   "lightgrey"
+  deg_color_main:       "red"
+  # Elbow plot
+  elbow_width:          7
+  elbow_height:         5
+  # QC plots
+  qc_vln_width:         10
+  qc_vln_height:        5
+  qc_scatter_width:     12
+  qc_scatter_height:    5
+
+# ── Escape Pathway Enrichment ──────────────────────────────────────────────────
+escape:
+  run:      true
+  method:   "AUCell"   # Options: "ssGSEA", "UCell", "AUCell", "GSVA" # WARNING ssGSEA is demanding
+  library:  ["H", "C5"]        # "H" = Hallmark, "C5" = Gene Ontology, etc.
+  min_size: 5
+
+# ── Genes ──────────────────────────────────────────────────────────────────────
+genes:
+  genes_to_plot:
+    - "Sphk1"
+    - "Spns2"
+    - "S1pr1"
+    - "S1pr2"
+    - "S1pr3"
+    - "S1pr4"
+    - "S1pr5"
+    - "Cd19"
+    - "Cd3e"
+    - "Cd4"
+    - "Cd8a"
+    - "Cd68"
+    - "Flt3"
+    - "Foxp3"
+    - "Itga2b"
+    - "Ackr4"
+    - "Ccr6"
+    - "Cdh5"
+    - "Lyve1"
+    - "Mpz"
+    - "Pdgfra"
+    - "Pdgfrb"
+    - "Pdpn"
+    - "Dcn"
+    - "Mki67"
+    - "Ptprc"
+    - "Pecam1"
+    - "Prox1"
+    - "Ccl19"
+    - "Tnfsf11"
+    - "Cxcl13"
+    - "Madcam1"
+    - "Vcam1"
+    - "Cr2"
+    - "Mfge8"
+  corr_genes_x:
+    - "S1pr1"
+    - "S1pr2"
+    - "S1pr3"
+    - "S1pr4"
+    - "S1pr5"
+  corr_genes_y:
+    - "Ccl19"
+    - "Cxcl13"
+    - "Cr2"
+    - "Mfge8"
+
+# ── Main groupings (null = auto: cluster_col + all singler label names) ─────────
+groupings_main: ~
+
+# ── Subsets ────────────────────────────────────────────────────────────────────
+# exact_match: true  → pattern list matched with %in%
+# exact_match: false → pattern list joined with | and matched with grepl (regex)
+# genes: ~           → falls back to genes_to_plot
+subsets:
+  - display_name:  "Cluster_7"
+    match_col:     "seurat_clusters"
+    pattern:
+      - "^7$"
+    exact_match:   true
+    type_col:      "cluster_7_subtype"
+    pca_dims_from: 1
+    pca_dims_to:   10
+    deg_color:     "purple"
+    genes:
+         - "Pecam1"
+         - "Cdh5"
+         - "Prox1"
+         - "Lyve1"
+         - "Pdpn"
+         - "Ccl19"
+         - "Cxcl13"
+         - "Madcam1"
+         - "Vcam1"
+         - "Tnfsf11"
+    label_rules:   []
+
+  - display_name:  "Fibroblasts"
+    match_col:     "singleR_labels_main"
+    pattern:
+      - "Fibroblasts"
+    exact_match:   true
+    type_col:      "fibroblast_type"
+    pca_dims_from: 1
+    pca_dims_to:   10
+    color:         "darkgreen"
+    genes:
+      - "Ccl19"
+      - "Cxcl13"
+      - "Madcam1"
+      - "Vcam1"
+      - "Tnfsf11"
+    label_rules: []
+  
+  - display_name:  "Endothelial"
+    match_col:     "singleR_labels_main"
+    pattern:
+      - "Endothelial cells"
+    exact_match:   true
+    type_col:      "endothelial_type"
+    pca_dims_from: 1
+    pca_dims_to:   10
+    color:         "orange"
+    genes:
+      - "Lyve1"
+      - "Madcam1"
+      - "Itga2b"
+      - "Glycam1"
+      - "Cd44"
+      - "Pf4"
+      - "Vcam1"
+      - "Ackr4"
+      - "Cd36"
+      - "Fabp4"
+      - "Ccl21a"
+      - "Ackr3"
+    label_rules: []
