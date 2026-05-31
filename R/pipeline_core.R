@@ -54,6 +54,7 @@ run_pipeline <- function(base_config_path, override_config_path = NULL, sample_m
           mt_pattern           = cfg$species$mt_pattern,
           genes_to_remove  = cfg$species$genes_to_remove,
           min_features         = cfg$qc$min_features,
+          max_features         = cfg$qc$max_features, 
           max_counts           = cfg$qc$max_counts,
           max_mt_percent       = cfg$qc$max_mt_percent,
           min_cells            = cfg$qc$min_cells,

@@ -43,8 +43,8 @@
 #' @export
 process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
                                   data_path, gene_removal_pattern, mt_pattern,
-                                  genes_to_remove, min_features, max_counts,
-                                  max_mt_percent, min_cells, cfg) {
+                                  genes_to_remove, min_features, max_features,
+                                  max_counts, max_mt_percent, min_cells, cfg) {
   
   message("\n--- Processing Sample: ", file_prefix, " ---")
   make_dir(qc_dir)
