@@ -429,7 +429,7 @@ run_gene_correlations <- function(seurat_obj,
     message("      -> Found: none")
   }
   if (length(missing_x) > 0) {
-    message("      -> Missing (not in SCT assay): ", paste(missing_x, collapse = ", "))
+    message("      -> Missing (not in assay): ", paste(missing_x, collapse = ", "))
   }
 
   # --- Report original and missing genes for set Y ---
@@ -442,7 +442,7 @@ run_gene_correlations <- function(seurat_obj,
     message("      -> Found: none")
   }
   if (length(missing_y) > 0) {
-    message("      -> Missing (not in SCT assay): ", paste(missing_y, collapse = ", "))
+    message("      -> Missing (not in assay): ", paste(missing_y, collapse = ", "))
   }
 
   # --- Use only present genes ---

@@ -84,6 +84,12 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     merged_obj$sample <- factor(cond_vec, levels = cond_levels)
     save_cell_counts(merged_obj, paste0("before_SCT_", comp_group), dirs$qc)
 
+    # ─── Ensure RNA assay has log‑normalized data (for correlations, etc.) ───
+    if (!"data" %in% SeuratObject::Layers(merged_obj[["RNA"]])) {
+        message("   [INFO] Running default NormalizeData on RNA assay...")
+        merged_obj <- Seurat::NormalizeData(merged_obj, assay = "RNA", verbose = FALSE)
+    }
+
     # ─── Regression processing ─────────────────────────────────────────────────
     regress_vars <- cfg$processing$vars_to_regress 
 
