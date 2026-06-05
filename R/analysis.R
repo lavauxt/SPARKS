@@ -402,11 +402,13 @@ run_gene_correlations <- function(seurat_obj,
                                   prefix,
                                   cond_col = "condition",
                                   method = "pearson",
-                                  global_plot = TRUE) {
+                                  global_plot = TRUE,
+                                  assay = "SCT") {
 
   message("--- Starting gene correlation analysis (Grouping: ", grouping_col, ") ---")
+  message("   Using assay: ", assay)
   
-  Seurat::DefaultAssay(seurat_obj) <- "SCT"
+  Seurat::DefaultAssay(seurat_obj) <- assay
   corr_dir <- file.path(out_dir, "Correlation")
   if (!dir.exists(corr_dir)) dir.create(corr_dir, recursive = TRUE)
 
@@ -415,7 +417,7 @@ run_gene_correlations <- function(seurat_obj,
   
   conditions <- unique(as.character(seurat_obj@meta.data[[cond_col]]))
   conditions <- conditions[!is.na(conditions)]
-  expr <- Seurat::GetAssayData(seurat_obj, assay = "SCT", layer = "data")
+  expr <- Seurat::GetAssayData(seurat_obj, assay = assay, layer = "data")
 
   # --- Report original and missing genes for set X ---
   message("   Gene set X (", length(genes_x), " genes provided):")

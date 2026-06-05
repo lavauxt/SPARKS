@@ -402,8 +402,9 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
       genes_y      = cy,
       out_dir      = group_dir,
       prefix       = paste0(file_prefix, "_", group_col),
-      cond_col = "condition",
-      method = "pearson"
+      cond_col     = "condition",
+      method       = "pearson",
+      assay        = "RNA"
     )
   } else {
     message("[SKIP Correlation] Genes to correlate not set")
