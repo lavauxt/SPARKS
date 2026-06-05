@@ -372,12 +372,11 @@ prop_test_result <- tryCatch({
   invisible(NULL)
 }
 
-#' Compute gene-gene correlation matrices per group and condition
+#' Compute gene-gene correlation matrices per group and condition, plus global
 #'
 #' This function computes pairwise correlations between two gene sets
-#' (genes_x vs genes_y) within each group and condition of a Seurat object.
-#' It generates correlation matrices, saves heatmaps, and exports long-format
-#' correlation tables.
+#' (genes_x vs genes_y) within each group and condition, and optionally
+#' across all cells (global). Generates heatmaps and exports long-format tables.
 #'
 #' @param seurat_obj A Seurat object containing expression data.
 #' @param grouping_col Character. Metadata column used to define groups.
@@ -386,8 +385,10 @@ prop_test_result <- tryCatch({
 #' @param out_dir Character. Output directory where results will be saved.
 #' @param prefix Character. Prefix added to output file names.
 #' @param cond_col Character. Metadata column used to define conditions
-#'   (default: "analysis_group").
+#'   (default: "condition").
 #' @param method Character. Correlation method to use ("pearson" or "spearman").
+#' @param global_plot Logical. If TRUE, generate an overall correlation heatmap
+#'   using all cells (ignoring grouping_col and cond_col). Default TRUE.
 #'
 #' @return NULL (invisibly). Writes heatmaps and correlation tables to disk.
 #'
@@ -400,7 +401,8 @@ run_gene_correlations <- function(seurat_obj,
                                   out_dir, 
                                   prefix,
                                   cond_col = "condition",
-                                  method = "pearson") {
+                                  method = "pearson",
+                                  global_plot = TRUE) {
 
   message("--- Starting gene correlation analysis (Grouping: ", grouping_col, ") ---")
   
@@ -415,14 +417,107 @@ run_gene_correlations <- function(seurat_obj,
   conditions <- conditions[!is.na(conditions)]
   expr <- Seurat::GetAssayData(seurat_obj, assay = "SCT", layer = "data")
 
-  valid_genes_x <- intersect(genes_x, rownames(expr))
-  valid_genes_y <- intersect(genes_y, rownames(expr))
+  # --- Report original and missing genes for set X ---
+  message("   Gene set X (", length(genes_x), " genes provided):")
+  present_x <- intersect(genes_x, rownames(expr))
+  missing_x <- setdiff(genes_x, rownames(expr))
+  if (length(present_x) > 0) {
+    message("      -> Found: ", paste(present_x, collapse = ", "))
+  } else {
+    message("      -> Found: none")
+  }
+  if (length(missing_x) > 0) {
+    message("      -> Missing (not in SCT assay): ", paste(missing_x, collapse = ", "))
+  }
+
+  # --- Report original and missing genes for set Y ---
+  message("   Gene set Y (", length(genes_y), " genes provided):")
+  present_y <- intersect(genes_y, rownames(expr))
+  missing_y <- setdiff(genes_y, rownames(expr))
+  if (length(present_y) > 0) {
+    message("      -> Found: ", paste(present_y, collapse = ", "))
+  } else {
+    message("      -> Found: none")
+  }
+  if (length(missing_y) > 0) {
+    message("      -> Missing (not in SCT assay): ", paste(missing_y, collapse = ", "))
+  }
+
+  # --- Use only present genes ---
+  valid_genes_x <- present_x
+  valid_genes_y <- present_y
 
   if (length(valid_genes_x) < 1 || length(valid_genes_y) < 1) {
-    message(" -> Skipping Correlation: Genes not found in SCT assay.")
+    message(" -> Skipping Correlation: At least one gene set is empty after filtering.")
     return(invisible(NULL))
   }
 
+  # ========== GLOBAL CORRELATION (all cells, ignoring groups) ==========
+  if (global_plot) {
+    message("   Computing global correlation across all cells...")
+    all_cells <- colnames(expr)
+    mat_x_all <- t(as.matrix(expr[valid_genes_x, all_cells, drop = FALSE]))
+    mat_y_all <- t(as.matrix(expr[valid_genes_y, all_cells, drop = FALSE]))
+    cor_global <- suppressWarnings(cor(mat_x_all, mat_y_all, method = method))
+    cor_global[is.na(cor_global)] <- 0
+    cor_global_df <- as.data.frame(as.table(cor_global))
+    colnames(cor_global_df) <- c("Gene_X", "Gene_Y", "Correlation")
+    cor_global_df$Method <- method
+    cor_global_df$Type <- "Global"
+    
+    # Save global correlation table
+    global_tsv <- file.path(corr_dir, paste0("Correlations_", method, "_", prefix, "_global.tsv"))
+    write.table(cor_global_df, global_tsv, sep = "\t", quote = FALSE, row.names = FALSE)
+    message("   -> Global correlation table saved: ", basename(global_tsv))
+    
+    # Generate global heatmap
+    tryCatch({
+      p_global <- ggplot2::ggplot(cor_global_df, ggplot2::aes(x = Gene_Y, y = Gene_X, fill = Correlation)) +
+        ggplot2::geom_tile(color = "darkgray", linewidth = 0.6) + 
+        ggplot2::geom_text(
+          ggplot2::aes(label = sprintf("%.2f", Correlation)), 
+          size = 3.8, 
+          color = "black"
+        ) +
+        ggplot2::scale_fill_gradient2(
+          low = "blue", mid = "white", high = "red", midpoint = 0,
+          limits = c(-1, 1), breaks = c(-1, -0.5, 0, 0.5, 1),
+          labels = c("-1.0", "-0.5", "0.0", "0.5", "1.0"),
+          guide = ggplot2::guide_colorbar(
+            title = "Corr", title.position = "top", title.hjust = 0.5,
+            barwidth = ggplot2::unit(0.45, "cm"), barheight = ggplot2::unit(4.2, "cm"),
+            ticks.colour = "white", ticks.linewidth = 0.8
+          )
+        ) +
+        ggplot2::coord_fixed() +
+        ggplot2::scale_y_discrete(limits = rev(unique(cor_global_df$Gene_X))) +
+        ggplot2::scale_x_discrete(limits = unique(cor_global_df$Gene_Y)) +
+        ggplot2::theme_minimal() +
+        ggplot2::labs(
+          title = paste0(toupper(method), " Correlation (Global)"),
+          subtitle = paste0("all cells (n=", length(all_cells), ")"),
+          x = NULL, y = NULL
+        ) +
+        ggplot2::theme(
+          plot.title = ggplot2::element_text(face = "bold", size = 15, hjust = 0.5, margin = ggplot2::margin(b = 4)),
+          plot.subtitle = ggplot2::element_text(size = 11, hjust = 0.5, margin = ggplot2::margin(b = 12)),
+          axis.text.y = ggplot2::element_text(size = 11, color = "black"),
+          axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust = 1, size = 11, color = "black"),
+          panel.grid = ggplot2::element_blank(),
+          legend.title = ggplot2::element_text(size = 11, face = "bold"),
+          legend.text = ggplot2::element_text(size = 10),
+          legend.margin = ggplot2::margin(l = 12)
+        )
+      
+      global_png <- file.path(corr_dir, paste0("Corr_", method, "_", prefix, "_global.png"))
+      ggplot2::ggsave(filename = global_png, plot = p_global, width = 5.6, height = 4.6, dpi = 300, bg = "white")
+      message("   -> Global heatmap saved: ", basename(global_png))
+    }, error = function(e) {
+      message("   [WARNING] Global heatmap could not be generated: ", e$message)
+    })
+  }
+
+  # ========== PER-GROUP AND PER-CONDITION CORRELATIONS ==========
   all_cors <- list()
 
   for (grp in groups) {
@@ -449,78 +544,68 @@ run_gene_correlations <- function(seurat_obj,
         cor_df$N_Cells <- n_cells
         cor_df$Method <- method
         all_cors[[grp_cond_label]] <- cor_df
-      tryCatch({
-                clean_label <- gsub("[^A-Za-z0-9]", "_", grp_cond_label)
-                out_file <- file.path(corr_dir, paste0("Corr_", method, "_", prefix, "_", clean_label, ".png"))
+        
+        # Generate heatmap for this group/condition
+        tryCatch({
+          clean_label <- gsub("[^A-Za-z0-9]", "_", grp_cond_label)
+          out_file <- file.path(corr_dir, paste0("Corr_", method, "_", prefix, "_", clean_label, ".png"))
 
-                p <- ggplot2::ggplot(cor_df, ggplot2::aes(x = Gene_Y, y = Gene_X, fill = Correlation)) +
-                  ggplot2::geom_tile(color = "darkgray", linewidth = 0.6) + 
-                  ggplot2::geom_text(
-                    ggplot2::aes(label = sprintf("%.2f", Correlation)), 
-                    size = 3.8, 
-                    color = "black"
-                  ) +
-                  ggplot2::scale_fill_gradient2(
-                    low = "blue", 
-                    mid = "white", 
-                    high = "red", 
-                    midpoint = 0,
-                    limits = c(-1, 1),
-                    breaks = c(-1, -0.5, 0, 0.5, 1),
-                    labels = c("-1.0", "-0.5", "0.0", "0.5", "1.0"),
-                    guide = ggplot2::guide_colorbar(
-                      title = "Corr",
-                      title.position = "top",
-                      title.hjust = 0.5,
-                      barwidth = ggplot2::unit(0.45, "cm"),
-                      barheight = ggplot2::unit(4.2, "cm"),
-                      ticks.colour = "white",
-                      ticks.linewidth = 0.8
-                    )
-                  ) +
-                  ggplot2::coord_fixed() +
-                  ggplot2::scale_y_discrete(limits = rev(unique(cor_df$Gene_X))) +
-                  ggplot2::scale_x_discrete(limits = unique(cor_df$Gene_Y)) +
-                  ggplot2::theme_minimal() +
-                  ggplot2::labs(
-                    title = paste0(toupper(method), " Corr: ", grp),
-                    subtitle = paste0("(", cond, ", n=", n_cells, ")"),
-                    x = NULL, 
-                    y = NULL
-                  ) +
-                  ggplot2::theme(
-                    plot.title = ggplot2::element_text(face = "bold", size = 15, hjust = 0.5, margin = ggplot2::margin(b = 4)),
-                    plot.subtitle = ggplot2::element_text(size = 11, hjust = 0.5, margin = ggplot2::margin(b = 12)),
-                    axis.text.y = ggplot2::element_text(size = 11, color = "black"),
-                    axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust = 1, size = 11, color = "black"),
-                    panel.grid = ggplot2::element_blank(),
-                    legend.title = ggplot2::element_text(size = 11, face = "bold"),
-                    legend.text = ggplot2::element_text(size = 10),
-                    legend.margin = ggplot2::margin(l = 12)
-                  )
-                ggplot2::ggsave(
-                  filename = out_file,
-                  plot = p,
-                  width = 5.6, 
-                  height = 4.6,
-                  dpi = 300,
-                  bg = "white"
-                )
-              }, error = function(e) {
-                message(" -> Heatmap skipped for ", grp_cond_label, ": ", e$message)
-              })     
-              } else {
-                message(paste("Skipping:", grp_cond_label, "| Insufficient cells (N =", n_cells, ")"))
-              }
-            }
-          }
+          p <- ggplot2::ggplot(cor_df, ggplot2::aes(x = Gene_Y, y = Gene_X, fill = Correlation)) +
+            ggplot2::geom_tile(color = "darkgray", linewidth = 0.6) + 
+            ggplot2::geom_text(
+              ggplot2::aes(label = sprintf("%.2f", Correlation)), 
+              size = 3.8, 
+              color = "black"
+            ) +
+            ggplot2::scale_fill_gradient2(
+              low = "blue", mid = "white", high = "red", midpoint = 0,
+              limits = c(-1, 1), breaks = c(-1, -0.5, 0, 0.5, 1),
+              labels = c("-1.0", "-0.5", "0.0", "0.5", "1.0"),
+              guide = ggplot2::guide_colorbar(
+                title = "Corr", title.position = "top", title.hjust = 0.5,
+                barwidth = ggplot2::unit(0.45, "cm"), barheight = ggplot2::unit(4.2, "cm"),
+                ticks.colour = "white", ticks.linewidth = 0.8
+              )
+            ) +
+            ggplot2::coord_fixed() +
+            ggplot2::scale_y_discrete(limits = rev(unique(cor_df$Gene_X))) +
+            ggplot2::scale_x_discrete(limits = unique(cor_df$Gene_Y)) +
+            ggplot2::theme_minimal() +
+            ggplot2::labs(
+              title = paste0(toupper(method), " Corr: ", grp),
+              subtitle = paste0("(", cond, ", n=", n_cells, ")"),
+              x = NULL, y = NULL
+            ) +
+            ggplot2::theme(
+              plot.title = ggplot2::element_text(face = "bold", size = 15, hjust = 0.5, margin = ggplot2::margin(b = 4)),
+              plot.subtitle = ggplot2::element_text(size = 11, hjust = 0.5, margin = ggplot2::margin(b = 12)),
+              axis.text.y = ggplot2::element_text(size = 11, color = "black"),
+              axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust = 1, size = 11, color = "black"),
+              panel.grid = ggplot2::element_blank(),
+              legend.title = ggplot2::element_text(size = 11, face = "bold"),
+              legend.text = ggplot2::element_text(size = 10),
+              legend.margin = ggplot2::margin(l = 12)
+            )
+          ggplot2::ggsave(filename = out_file, plot = p, width = 5.6, height = 4.6, dpi = 300, bg = "white")
+        }, error = function(e) {
+          message(" -> Heatmap skipped for ", grp_cond_label, ": ", e$message)
+        })     
+      } else {
+        message(paste("Skipping:", grp_cond_label, "| Insufficient cells (N =", n_cells, ")"))
+      }
+    }
+  }
 
+  # Combine all per-group correlation tables
   if (length(all_cors) > 0) {
     final_df <- do.call(rbind, all_cors)
-    tsv_file <- file.path(corr_dir, paste0("Correlations_", method, "_", prefix, ".tsv"))
+    tsv_file <- file.path(corr_dir, paste0("Correlations_", method, "_", prefix, "_by_group.tsv"))
     write.table(final_df, tsv_file, sep = "\t", quote = FALSE, row.names = FALSE)
-    message("--- Analysis Finished. Table saved to: ", basename(tsv_file), " ---")
+    message("--- Per-group correlation table saved to: ", basename(tsv_file), " ---")
   } else {
     message("--- No groups met the cell count threshold (N >= 30). ---")
   }
+
+  message("--- Gene correlation analysis finished ---")
+  invisible(NULL)
 }
