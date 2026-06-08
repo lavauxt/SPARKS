@@ -158,7 +158,7 @@ Maps classification targets, dictionary scopes, and matching conditions.
         ref_field: "label.fine"      # High-resolution lineage designation mapping
         is_fine: true
 ```
-* 8. Functional Enrichment Architecture (escape)
+8. Functional Enrichment Architecture (escape)
 Orchestrates functional enrichment scoring routines via internal MSigDB parsing.
 ```
   escape:
@@ -167,7 +167,7 @@ Orchestrates functional enrichment scoring routines via internal MSigDB parsing.
     library: ["H", "C5"]            # Focus databases targeted (e.g., Hallmark, Gene Ontology)
     min_size: 5                     # Minimum dimensional gene pathway footprint filter
 ```
-* 9. Feature Target Registries (genes)
+9. Feature Target Registries (genes)
 Directs automated expression tracing visualization outputs and coordinate matrix calculations.
 ```
   genes:
@@ -178,7 +178,7 @@ Directs automated expression tracing visualization outputs and coordinate matrix
     corr_genes_x: ["S1pr1", "S1pr2"] # Coordinate factors driving expression correlation matrices
     corr_genes_y: ["Ccl19", "Cxcl13"]
 ```
-* 10. Directs automated expression tracing visualization outputs and coordinate matrix calculations.
+10. Directs automated expression tracing visualization outputs and coordinate matrix calculations.
 ```
   genes:
     genes_to_plot:                  # Global registry driving FeaturePlot/Violin generation
@@ -188,7 +188,7 @@ Directs automated expression tracing visualization outputs and coordinate matrix
     corr_genes_x: ["S1pr1", "S1pr2"] # Coordinate factors driving expression correlation matrices
     corr_genes_y: ["Ccl19", "Cxcl13"]
 ```
-* 11. Declarative Sub-Clustering Directives (subsets)
+11. Declarative Sub-Clustering Directives (subsets)
 Defines cell population routing rules for automated secondary extraction, 
 re-clustering, and sub-population profiling.
 ```
