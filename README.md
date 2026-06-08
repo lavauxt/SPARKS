@@ -79,7 +79,7 @@ sparks(
 The entire analytical pipeline is governed via a structured YAML configuration 
 matrix. Below is a detailed mapping of the block structure parameters.
 
-1. Project Ingestion Landscape (pipeline)
+* Project Ingestion Landscape (pipeline)
 Maps workspace directory contexts, target organisms, and metadata registry links.
 ```
   pipeline:
@@ -88,7 +88,7 @@ Maps workspace directory contexts, target organisms, and metadata registry links
     species_target: "Mouse"         # Organism directive ("Mouse" or "Human")
     sample_table: "./sample_table.tsv"  # File path to sample tracking matrix
 ```
-2. Organism Profile Criteria (species)
+*  Organism Profile Criteria (species)
 Tracks sequence element clearance filters and establishes reference parameters 
 for cell type taxonomy annotations.
 ```
@@ -99,7 +99,7 @@ for cell type taxonomy annotations.
     ref_primary: "ImmGenData"                               # Primary SingleR reference
     ref_secondary: "MouseRNAseqData"                        # Secondary SingleR reference
 ```
-3. Covariate Evaluation Systems (sex_scoring & cell_cycle)
+*  Covariate Evaluation Systems (sex_scoring & cell_cycle)
 Enables biometric state evaluations and directs downstream regression scaling.
 ```
   sex_scoring:
@@ -113,7 +113,7 @@ Enables biometric state evaluations and directs downstream regression scaling.
     run: true               # Quantifies cell cycle metrics
     regress: true           # Regresses out cell cycle signatures to avoid cell cycle confounding
 ```
-4. Technical Quality Control Boundaries (qc)
+*  Technical Quality Control Boundaries (qc)
 Establishes rigid thresholds for filtering out low-quality cell events and 
 transcript artifacts.
 ```
@@ -123,7 +123,7 @@ transcript artifacts.
     max_mt_percent: 10      # Percentage ceiling for mitochondrial transcript ratios
     min_cells: 3            # Baseline gene feature filtering requirement
 ```
-5. Seurat Dimensional Scaling Matrix (processing)
+*  Seurat Dimensional Scaling Matrix (processing)
 Directs down-stream cluster processing, community partitioning, and dimensionality reductions.
 ```
   processing:
@@ -134,7 +134,7 @@ Directs down-stream cluster processing, community partitioning, and dimensionali
     cluster_resolution: 0.5          # Louvain modularity clustering resolution scale
     reduction: "umap"                # Low-dimensional embedding selection
 ```
-6. Differential Gene Discovery (deg)
+*  Differential Gene Discovery (deg)
 Configures strict statistical criteria used for identifying differentially expressed markers.
 ```
   deg:
@@ -144,7 +144,7 @@ Configures strict statistical criteria used for identifying differentially expre
     min_p_val_adj: 0.01              # Adjusted significance ceiling limit
     avg_expression_layers: ["data", "counts"] # Layer extractions checked during analysis
 ```
-7. Reference Classification Horizons (singler)
+*  Reference Classification Horizons (singler)
 Maps classification targets, dictionary scopes, and matching conditions.
 ```
   singler:
@@ -158,7 +158,7 @@ Maps classification targets, dictionary scopes, and matching conditions.
         ref_field: "label.fine"      # High-resolution lineage designation mapping
         is_fine: true
 ```
-8. Functional Enrichment Architecture (escape)
+*  Functional Enrichment Architecture (escape)
 Orchestrates functional enrichment scoring routines via internal MSigDB parsing.
 ```
   escape:
@@ -167,7 +167,7 @@ Orchestrates functional enrichment scoring routines via internal MSigDB parsing.
     library: ["H", "C5"]            # Focus databases targeted (e.g., Hallmark, Gene Ontology)
     min_size: 5                     # Minimum dimensional gene pathway footprint filter
 ```
-9. Feature Target Registries (genes)
+*  Feature Target Registries (genes)
 Directs automated expression tracing visualization outputs and coordinate matrix calculations.
 ```
   genes:
@@ -178,7 +178,7 @@ Directs automated expression tracing visualization outputs and coordinate matrix
     corr_genes_x: ["S1pr1", "S1pr2"] # Coordinate factors driving expression correlation matrices
     corr_genes_y: ["Ccl19", "Cxcl13"]
 ```
-10. Directs automated expression tracing visualization outputs and coordinate matrix calculations.
+*  Directs automated expression tracing visualization outputs and coordinate matrix calculations.
 ```
   genes:
     genes_to_plot:                  # Global registry driving FeaturePlot/Violin generation
@@ -188,7 +188,7 @@ Directs automated expression tracing visualization outputs and coordinate matrix
     corr_genes_x: ["S1pr1", "S1pr2"] # Coordinate factors driving expression correlation matrices
     corr_genes_y: ["Ccl19", "Cxcl13"]
 ```
-11. Declarative Sub-Clustering Directives (subsets)
+*  Declarative Sub-Clustering Directives (subsets)
 Defines cell population routing rules for automated secondary extraction, 
 re-clustering, and sub-population profiling.
 ```
