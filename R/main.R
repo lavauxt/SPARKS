@@ -177,6 +177,29 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
           )
         }
 
+    # <--- ADDED FOR QC REPORT: generate HTML report ---------------------------------
+    if (requireNamespace("rmarkdown", quietly = TRUE)) {
+      # Path to the R Markdown template (adjust to your actual location)
+      template_path <- file.path(cfg$pipeline$results_dir, "..", "templates", "qc_report.Rmd")
+      if (!file.exists(template_path)) {
+        message("   [WARNING] QC report template not found at ", template_path)
+      } else {
+        author <- cfg$report$author %||% "Pipeline User"
+        title  <- cfg$report$title %||% paste("QC Report -", comp_group)
+        generate_qc_report(
+          seurat_obj    = merged_obj,
+          comp_group    = comp_group,
+          out_dir       = dirs$qc,
+          author        = author,
+          title         = title,
+          rmd_template  = template_path
+        )
+      }
+    } else {
+      message("   [SKIP] rmarkdown not installed – QC report not generated.")
+    }
+    # <--- END ADDED SECTION -------------------------------------------------------
+
     groupings_main <- cfg$groupings_main
     if (is.null(groupings_main)) {
       singler_names <- vapply(
