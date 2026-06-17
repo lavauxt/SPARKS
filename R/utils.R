@@ -110,7 +110,7 @@ get_valid_groups <- function(meta, col, min_cells = 3L) {
 get_avg_expr <- function(seurat_obj, layer = "data") {
   safe_run({
     suppressWarnings(
-      Seurat::AverageExpression(seurat_obj, assays = "SCT", 
+      Seurat::AverageExpression(seurat_obj, assays = "SCT",
                                 layer = layer, return.seurat = FALSE)[["SCT"]]
     )
   }, label = "AverageExpression")
@@ -153,7 +153,7 @@ get_junk_pattern <- function(species = "Mouse") {
 #' @export
 .find_all_markers_safe <- function(seurat_obj, only_pos = TRUE, min_pct = 0.25, logfc_threshold = 0.25) {
   safe_run(
-    Seurat::FindAllMarkers(seurat_obj, only.pos = only_pos, min.pct = min_pct, 
+    Seurat::FindAllMarkers(seurat_obj, only.pos = only_pos, min.pct = min_pct,
                            logfc.threshold = logfc_threshold, verbose = FALSE),
     label = "FindAllMarkers"
   )
@@ -217,51 +217,60 @@ get_junk_pattern <- function(species = "Mouse") {
   SeuratObject::JoinLayers(obj)
 }
 
-#' Generate an HTML report for a processed Seurat object
+#' Generate an HTML QC report for a processed Seurat object
 #'
-#' @param seurat_obj A Seurat object after full processing (filtering, SCT, clustering).
-#' @param comp_group Character. Name of the comparison group (used in title and file name).
-#' @param out_dir Character. Output directory for the report.
-#' @param author Character. Author name for the report.
-#' @param title Character. Custom title (default: paste("QC Report -", comp_group)).
-#' @param rmd_template Path to the R Markdown template. If NULL, uses a built‑in template.
+#' The report is always written to \code{out_dir} (the group's QC folder).
+#'
+#' @param seurat_obj A Seurat object after full processing.
+#' @param comp_group Character. Comparison group name.
+#' @param out_dir Character. Output directory – the HTML is saved here.
+#' @param author Character. Author name shown in the report.
+#' @param title Character. Report title.
+#' @param rmd_template Character. Path to the qc_report.Rmd template.
+#' @param cfg Named list. Full pipeline config (passed as a param so the Rmd
+#'   can display QC thresholds). Optional – defaults to NULL.
 #' @return Invisibly, the path to the generated HTML file.
 #' @export
-generate_qc_report <- function(seurat_obj, comp_group, out_dir, author = "Pipeline",
-                               title = NULL, rmd_template = NULL) {
+generate_qc_report <- function(seurat_obj, comp_group, out_dir,
+                               author       = "Pipeline",
+                               title        = NULL,
+                               rmd_template = NULL,
+                               cfg          = NULL) {
 
   if (!requireNamespace("rmarkdown", quietly = TRUE))
     stop("Package 'rmarkdown' is needed. Please install it: install.packages('rmarkdown')")
 
   if (is.null(title)) title <- paste("QC Report -", comp_group)
 
-  # If no template provided, create a temporary file with the embedded template
+  # BUG FIX #9: the original code had an unconditional stop() inside the
+  # "template not found" branch, which prevented any report from ever being
+  # generated.  We now emit a warning and return invisibly so the pipeline
+  # continues.  The caller (main.R) already validates the template path before
+  # reaching this function, so this branch is only a safety net.
   if (is.null(rmd_template) || !file.exists(rmd_template)) {
-    rmd_template <- tempfile(fileext = ".Rmd")
-    # The template content is given in the next section.
-    # We must write the raw template text to this file.
-    # For brevity, we assume you have saved the template separately.
-    # In practice, you can read it from a file in your package.
-    stop("Please provide a valid path to 'qc_report.Rmd' template.")
+    message("   [WARNING] generate_qc_report: template not found at '",
+            rmd_template %||% "<NULL>", "'. Skipping HTML report.")
+    return(invisible(NULL))
   }
 
   make_dir(out_dir)
   output_file <- file.path(out_dir, paste0("QC_report_", comp_group, ".html"))
 
   rmarkdown::render(
-    input = rmd_template,
+    input       = rmd_template,
     output_file = output_file,
-    params = list(
+    params      = list(
       seurat_obj = seurat_obj,
       comp_group = comp_group,
-      author = author,
-      title = title,
-      out_dir = out_dir
+      author     = author,
+      title      = title,
+      out_dir    = out_dir,
+      cfg        = cfg          # now forwarded so the Rmd can show QC params
     ),
-    envir = new.env(),
+    envir = new.env(parent = globalenv()),
     quiet = FALSE
   )
 
-  message("QC report saved to: ", output_file)
+  message("   QC report saved to: ", output_file)
   invisible(output_file)
 }

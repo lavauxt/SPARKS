@@ -1,7 +1,7 @@
 ---
-title: "r params$title"
-author: "r params$author"
-date: "r Sys.Date()"
+title: "`r params$title`"
+author: "`r params$author`"
+date: "`r Sys.Date()`"
 output:
   html_document:
     toc: true
@@ -12,113 +12,137 @@ params:
   seurat_obj: NULL
   comp_group: "comparison"
   author: "Pipeline"
+  title: "QC Report"
   out_dir: "."
+  cfg: NULL
 ---
 
-```r {r setup, include=FALSE}
+```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 library(Seurat)
 library(ggplot2)
 library(dplyr)
 library(knitr)
-```  
+```
 
-```r {r load-obj}
+```{r load-obj}
 obj <- params$seurat_obj
-if(is.null(obj)) stop("No Seurat object provided")
-group <- params$comp_group
+if (is.null(obj)) stop("No Seurat object provided")
+group  <- params$comp_group
 out_dir <- params$out_dir
-```  
+cfg    <- params$cfg   # may be NULL when report is rendered standalone
+```
 
-# QC Report: r group
+# QC Report: `r group`
 
 ## Summary of the dataset
 
-```r {r summary}
-total_cells <- ncol(obj)
-total_genes <- nrow(obj)
-cells_by_sample <- table(obj$orig.ident)
+```{r summary}
+total_cells       <- ncol(obj)
+total_genes       <- nrow(obj)
+cells_by_sample   <- table(obj$orig.ident)
 cells_by_condition <- table(obj$condition)
-```  
+```
 
-| Metric                | Value                 |
-|-----------------------|-----------------------|
-| **Total cells**       | r total_cells       |
-| **Total genes**       | r total_genes       |
-| **Samples**           | r length(unique(obj$orig.ident)) |
-| **Conditions**        | r length(unique(obj$condition)) |
+| Metric                | Value                                          |
+|-----------------------|------------------------------------------------|
+| **Total cells**       | `r total_cells`                                |
+| **Total genes**       | `r total_genes`                                |
+| **Samples**           | `r length(unique(obj$orig.ident))`             |
+| **Conditions**        | `r length(unique(obj$condition))`              |
 
 **Cells per sample:**
-```r {r cells-by-sample, results='asis'}
+```{r cells-by-sample, results='asis'}
 kable(as.data.frame(cells_by_sample), col.names = c("Sample", "Number of cells"))
-```   
+```
 
 **Cells per condition:**
-```r {r cells-by-condition, results='asis'}
+```{r cells-by-condition, results='asis'}
 kable(as.data.frame(cells_by_condition), col.names = c("Condition", "Number of cells"))
-```  
+```
 
 ## Filtering history
 
-The pipeline applied the following filters to each sample before merging:
+```{r filtering-params, results='asis'}
+# cfg is forwarded from the pipeline; show thresholds when available.
+if (!is.null(cfg)) {
+  params_df <- data.frame(
+    Parameter = c(
+      "Min features", "Max features", "Max counts",
+      "Max mitochondrial %", "Gene removal pattern"
+    ),
+    Value = c(
+      cfg$qc$min_features,
+      cfg$qc$max_features  %||% "N/A",
+      cfg$qc$max_counts,
+      cfg$qc$max_mt_percent,
+      cfg$species$gene_removal_pattern
+    ),
+    stringsAsFactors = FALSE
+  )
+  kable(params_df)
+} else {
+  cat("_(Config not available – run via `sparks()` to populate this section.)_\n")
+}
+```
 
-- Min features: r ifelse(exists("cfg"), cfg$qc$min_features, "?")
-- Max features: r ifelse(exists("cfg"), cfg$qc$max_features, "?")
-- Max counts: r ifelse(exists("cfg"), cfg$qc$max_counts, "?")
-- Max mitochondrial percent: r ifelse(exists("cfg"), cfg$qc$max_mt_percent, "?")
-- Gene removal pattern: r ifelse(exists("cfg"), cfg$species$gene_removal_pattern, "?")
-
-Doublet removal using scDblFinder. The numbers of doublets removed per sample are stored in QC/Doublet_Removed_*.txt.
+Doublet removal used scDblFinder. Per-sample stats are in `QC/Doublet_Removed_*.txt`.
 
 ## QC metrics after filtering
 
-```r {r qc-violin}
-p1 <- VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), 
+```{r qc-violin, fig.width=12, fig.height=5}
+p1 <- VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
               ncol = 3, pt.size = 0.1)
 print(p1)
-```   
+```
 
-```r {r qc-scatter}
+```{r qc-scatter, fig.width=12, fig.height=5}
 p2 <- FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
 p3 <- FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
-(p2 + p3)
-``` 
+print(p2 + p3)
+```
 
 ## Doublet detection
 
-```r {r doublets}
-if("scDblFinder.class" %in% colnames(obj[[]])) {
+```{r doublets}
+if ("scDblFinder.class" %in% colnames(obj[[]])) {
   dtab <- table(obj$scDblFinder.class)
   kable(as.data.frame(dtab), col.names = c("Class", "Number of cells"))
 } else {
-  cat("No doublet classification found in the object. (Doublets were removed before merging; see per-sample doublet stats in QC folder.)\n")
+  cat("No doublet classification found in the merged object.",
+      "(Doublets were removed before merging; see per-sample stats in the QC folder.)\n")
 }
-```  
+```
 
-## Cell cycle and sex scoring (if applied)
+## Cell cycle and sex scoring
 
-```r {r scoring}
-if("S.Score" %in% colnames(obj[[]])) {
-  cat("**Cell cycle scores**\n")
-  print(table(obj$Phase))
+```{r scoring}
+if ("S.Score" %in% colnames(obj[[]])) {
+  cat("**Cell cycle phase distribution**\n")
+  print(kable(as.data.frame(table(Phase = obj$Phase)),
+              col.names = c("Phase", "Cells")))
 }
-if("Assigned_Sex" %in% colnames(obj[[]])) {
-  cat("**Sex assignment**\n")
-  print(table(obj$Assigned_Sex))
+if ("Assigned_Sex" %in% colnames(obj[[]])) {
+  cat("\n**Sex assignment**\n")
+  print(kable(as.data.frame(table(Sex = obj$Assigned_Sex)),
+              col.names = c("Sex", "Cells")))
 }
-```  
+if (!"S.Score" %in% colnames(obj[[]]) && !"Assigned_Sex" %in% colnames(obj[[]])) {
+  cat("Cell cycle and sex scoring were not run for this dataset.\n")
+}
+```
 
 ## Clustering overview
 
-Number of clusters: ```r length(unique(obj$seurat_clusters)) ```
+Number of clusters: `r length(unique(obj$seurat_clusters))`
 
-```r {r umap, fig.width=8, fig.height=6}
+```{r umap, fig.width=8, fig.height=6}
 DimPlot(obj, reduction = "umap", group.by = "seurat_clusters", label = TRUE) +
   ggtitle(paste("UMAP -", group))
-```   
+```
 
 ## Session info
 
-```r {r session}
+```{r session}
 sessionInfo()
-``` 
+```

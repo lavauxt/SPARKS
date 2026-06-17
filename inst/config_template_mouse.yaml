@@ -83,14 +83,11 @@ labeling:
 
 # ── Plot ───────────────────────────────────────────────────────────────────────
 plot:
-  # UMAP (standard groupings)
   umap_width_standard:  14
   umap_height_standard: 7
-  # UMAP (fine SingleR labels)
   umap_width_fine:      16
   umap_height_fine:     14
   legend_nrow_fine:     8
-  # DEG UMAP
   deg_umap_width:       8
   deg_umap_height:      7
   deg_umap_point_size:  0.5
@@ -98,10 +95,8 @@ plot:
   deg_umap_label_size:  4
   deg_umap_color_low:   "lightgrey"
   deg_color_main:       "red"
-  # Elbow plot
   elbow_width:          7
   elbow_height:         5
-  # QC plots
   qc_vln_width:         10
   qc_vln_height:        5
   qc_scatter_width:     12
@@ -168,7 +163,7 @@ genes:
 groupings_main: ~
 
 # ── Subsets ────────────────────────────────────────────────────────────────────
-# exact_match: true  → pattern list matched with %in%
+# exact_match: true  → pattern list matched with %in%  (use plain strings, e.g. "7")
 # exact_match: false → pattern list joined with | and matched with grepl (regex)
 # genes: ~           → falls back to genes_to_plot
 subsets:
@@ -176,22 +171,25 @@ subsets:
     match_col:     "seurat_clusters"
     pattern:
       - "^7$"
-    exact_match:   true
+    # BUG FIX #10: was `exact_match: true`, which uses %in% and therefore
+    # treats "^7$" as a literal string — cluster "7" would never match.
+    # Changed to false so the pattern is evaluated as a regex via grepl().
+    exact_match:   false
     type_col:      "cluster_7_subtype"
     pca_dims_from: 1
     pca_dims_to:   10
     deg_color:     "purple"
     genes:
-         - "Pecam1"
-         - "Cdh5"
-         - "Prox1"
-         - "Lyve1"
-         - "Pdpn"
-         - "Ccl19"
-         - "Cxcl13"
-         - "Madcam1"
-         - "Vcam1"
-         - "Tnfsf11"
+      - "Pecam1"
+      - "Cdh5"
+      - "Prox1"
+      - "Lyve1"
+      - "Pdpn"
+      - "Ccl19"
+      - "Cxcl13"
+      - "Madcam1"
+      - "Vcam1"
+      - "Tnfsf11"
     label_rules:   []
 
   - display_name:  "Fibroblasts"
@@ -210,7 +208,7 @@ subsets:
       - "Vcam1"
       - "Tnfsf11"
     label_rules: []
-  
+
   - display_name:  "Endothelial"
     match_col:     "singleR_labels_main"
     pattern:

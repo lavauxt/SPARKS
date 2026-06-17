@@ -6,18 +6,18 @@
 #' @export
 sparks <- function(base_config_path, override_config_path = NULL, sample_metadata = NULL) {
   cfg <- load_pipeline_config(base_config_path, override_config_path)
-  
+
   if (isTRUE(cfg$parallel$enable)) {
     if (!requireNamespace("future", quietly = TRUE)) {
       stop("The 'future' package is required for parallelization. Please run: install.packages('future')")
     }
-    
-    message("   [Parallelization] Setting up ", cfg$parallel$workers, 
+
+    message("   [Parallelization] Setting up ", cfg$parallel$workers,
             " workers using strategy: ", cfg$parallel$strategy)
-            
+
     future::plan(strategy = cfg$parallel$strategy, workers = cfg$parallel$workers)
     options(future.globals.maxSize = cfg$parallel$max_size_gb * 1024^3)
-    
+
     on.exit({
       message("   [Parallelization] Reverting to sequential execution and closing workers...")
       future::plan("sequential")
@@ -28,7 +28,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     message("   [INFO] No sample_metadata argument provided. Loading from YAML config...")
     sample_metadata <- load_sample_table(cfg)
   }
-  
+
   cfg$sample_metadata <- sample_metadata
   make_dir(cfg$pipeline$results_dir)
 
@@ -38,7 +38,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     message("##################################\n")
 
     group_meta <- sample_metadata[sample_metadata$comparison_group == comp_group, ]
-      dirs       <- .setup_group_dirs(cfg$pipeline$results_dir, comp_group)
+    dirs       <- .setup_group_dirs(cfg$pipeline$results_dir, comp_group)
 
     # ── Per-sample processing ──────────────────────────────────────────────────
     protocol_objects <- lapply(seq_len(nrow(group_meta)), function(i) {
@@ -52,9 +52,9 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
           data_path            = cfg$pipeline$data_dir,
           gene_removal_pattern = cfg$species$gene_removal_pattern,
           mt_pattern           = cfg$species$mt_pattern,
-          genes_to_remove  = cfg$species$genes_to_remove,
+          genes_to_remove      = cfg$species$genes_to_remove,
           min_features         = cfg$qc$min_features,
-          max_features         = cfg$qc$max_features, 
+          max_features         = cfg$qc$max_features,
           max_counts           = cfg$qc$max_counts,
           max_mt_percent       = cfg$qc$max_mt_percent,
           min_cells            = cfg$qc$min_cells,
@@ -64,7 +64,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       )
     })
 
-     valid_objects <- Filter(Negate(is.null), protocol_objects)
+    valid_objects <- Filter(Negate(is.null), protocol_objects)
     if (length(valid_objects) == 0L) {
       message("[SKIP] No valid samples for group: ", comp_group)
       next
@@ -73,71 +73,74 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     # ── Merge ──────────────────────────────────────────────────────────────────
     valid_idx  <- !sapply(protocol_objects, is.null)
     merged_obj <- .merge_samples(valid_objects,
-                                  folder_ids = group_meta$folder_id[valid_idx])
+                                 folder_ids = group_meta$folder_id[valid_idx])
     cond_col    <- cfg$processing$condition_col
     cond_vec    <- as.character(merged_obj@meta.data[[cond_col]])
     cond_levels <- unique(as.character(group_meta$protocol))
     merged_obj[[cond_col]] <- factor(cond_vec, levels = cond_levels)
-    # Keep orig.ident as per-sample IDs (set during process_single_sample) so
-    # Harmony can correct across individual samples, not just conditions.
-    # Only update 'sample' as a convenience condition alias.
+    # Keep orig.ident as per-sample IDs so Harmony corrects across individual
+    # samples, not just conditions.  'sample' is a convenience condition alias.
     merged_obj$sample <- factor(cond_vec, levels = cond_levels)
     save_cell_counts(merged_obj, paste0("before_SCT_", comp_group), dirs$qc)
 
-    # ─── Ensure RNA assay has log‑normalized data (for correlations, etc.) ───
-    if (!"data" %in% SeuratObject::Layers(merged_obj[["RNA"]])) {
-        message("   [INFO] Running default NormalizeData on RNA assay...")
-        merged_obj <- Seurat::NormalizeData(merged_obj, assay = "RNA", verbose = FALSE)
-    }
+    # BUG FIX #5: ensure RNA assay has log-normalised data exactly once.
+    # The original code had a conditional NormalizeData guard here AND an
+    # unconditional NormalizeData call inside the sex/cell-cycle block,
+    # causing a redundant double normalisation whenever sex or cell-cycle
+    # scoring was enabled.  Run it once unconditionally here; the block below
+    # no longer repeats it.
+    message("   [INFO] Running NormalizeData on RNA assay...")
+    merged_obj <- Seurat::NormalizeData(merged_obj, assay = "RNA", verbose = FALSE)
 
-    # ─── Regression processing ─────────────────────────────────────────────────
-    regress_vars <- cfg$processing$vars_to_regress 
+    # ── Regression variables ────────────────────────────────────────────────────
+    regress_vars <- cfg$processing$vars_to_regress
 
-    # ─── Sex & Cell Cycle scoring ──────────────────────────────────────────────
-        if (cfg$sex_scoring$run || cfg$cell_cycle$run) {
-            message("   [INFO] Running temporary LogNormalize for accurate Module Scoring...")
-            merged_obj <- Seurat::NormalizeData(merged_obj, assay = "RNA", verbose = FALSE)
+    # ── Sex & Cell Cycle scoring ───────────────────────────────────────────────
+    if (cfg$sex_scoring$run || cfg$cell_cycle$run) {
 
-            # --- Sex Scoring ---
-            if (cfg$sex_scoring$run) {
-                merged_obj <- run_sex_scoring(
-                    seurat_obj   = merged_obj,
-                    config_block = cfg$sex_scoring,
-                    assay        = "RNA"
-                )
-                if (cfg$sex_scoring$regress && "Sex.Difference" %in% colnames(merged_obj[[]])) {
-                    message("   [INFO] Adding Sex.Difference to SCTransform regression.")
-                    regress_vars <- unique(c(regress_vars, "Sex.Difference"))
-                }
-            }
+      # --- Sex Scoring ---
+      if (cfg$sex_scoring$run) {
+        merged_obj <- run_sex_scoring(
+          seurat_obj   = merged_obj,
+          config_block = cfg$sex_scoring,
+          assay        = "RNA"
+        )
+        if (cfg$sex_scoring$regress && "Sex.Difference" %in% colnames(merged_obj[[]])) {
+          message("   [INFO] Adding Sex.Difference to SCTransform regression.")
+          regress_vars <- unique(c(regress_vars, "Sex.Difference"))
+        }
+      }
 
-            # --- Cell Cycle Scoring ---
-            if (cfg$cell_cycle$run) {
-                message("   [INFO] Running Cell Cycle Scoring...")
-                
-                s.genes <- Seurat::cc.genes.updated.2019$s.genes
-                g2m.genes <- Seurat::cc.genes.updated.2019$g2m.genes
+      # --- Cell Cycle Scoring ---
+      if (cfg$cell_cycle$run) {
+        message("   [INFO] Running Cell Cycle Scoring...")
 
-                if (cfg$pipeline$species_target == "mouse") {
-                    s.genes <- stringr::str_to_title(tolower(s.genes))
-                    g2m.genes <- stringr::str_to_title(tolower(g2m.genes))
-                }
+        s.genes   <- Seurat::cc.genes.updated.2019$s.genes
+        g2m.genes <- Seurat::cc.genes.updated.2019$g2m.genes
 
-                merged_obj <- Seurat::CellCycleScoring(
-                    object = merged_obj,
-                    s.features = s.genes,
-                    g2m.features = g2m.genes,
-                    assay = "RNA"
-                )
-
-                if (cfg$cell_cycle$regress) {
-                    message("   [INFO] Adding Cell Cycle scores (S.Score, G2M.Score) to SCTransform regression.")
-                    regress_vars <- unique(c(regress_vars, "S.Score", "G2M.Score"))
-                }
-            }
+        # BUG FIX #6: original code compared species_target to lowercase
+        # "mouse" but the YAML stores "Mouse" (capital M), so this branch was
+        # never entered and mouse cell-cycle genes were never title-cased.
+        if (tolower(cfg$pipeline$species_target) == "mouse") {
+          s.genes   <- stringr::str_to_title(tolower(s.genes))
+          g2m.genes <- stringr::str_to_title(tolower(g2m.genes))
         }
 
-    # ─── Seurat processing ────────────────────────────────────────────────────────────
+        merged_obj <- Seurat::CellCycleScoring(
+          object       = merged_obj,
+          s.features   = s.genes,
+          g2m.features = g2m.genes,
+          assay        = "RNA"
+        )
+
+        if (cfg$cell_cycle$regress) {
+          message("   [INFO] Adding S.Score, G2M.Score to SCTransform regression.")
+          regress_vars <- unique(c(regress_vars, "S.Score", "G2M.Score"))
+        }
+      }
+    }
+
+    # ── Seurat processing ──────────────────────────────────────────────────────
     merged_obj <- run_seurat_processing(
       seurat_obj      = merged_obj,
       dims_pca        = cfg$processing$pca_dims,
@@ -146,8 +149,8 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       vars_to_regress = regress_vars,
       split_by        = "orig.ident"
     )
-    
-     # ── Elbow Plot ────────────────────────────────────────────────────────────
+
+    # ── Elbow Plot ─────────────────────────────────────────────────────────────
     save_png(
       Seurat::ElbowPlot(merged_obj,
         ndims = min(cfg$processing$n_elbow_dims, ncol(merged_obj) - 1L)),
@@ -157,60 +160,65 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     )
     save_cell_counts(merged_obj, paste0("after_clustering_", comp_group), dirs$qc)
 
-    # ── SingleR ────────────────────────────────────────────────────────────────    
+    # ── SingleR ────────────────────────────────────────────────────────────────
     merged_obj <- run_singler_annotation(
-      seurat_obj    = merged_obj,
+      seurat_obj     = merged_obj,
       species_target = cfg$pipeline$species_target,
       ref_celldex1   = cfg$species$ref_primary,
-      ref_celldex2 = cfg$species$ref_secondary,
-      singler_cfg   = cfg$singler
+      ref_celldex2   = cfg$species$ref_secondary,
+      singler_cfg    = cfg$singler
     )
 
     # ── Escape Enrichment ──────────────────────────────────────────────────────
-        if (isTRUE(cfg$escape$run)) {
-          merged_obj <- run_escape_enrichment(
-            seurat_obj = merged_obj,
-            species    = cfg$pipeline$species_target,
-            library    = cfg$escape$library,
-            method     = cfg$escape$method,
-            min_size   = cfg$escape$min_size
-          )
-        }
+    if (isTRUE(cfg$escape$run)) {
+      merged_obj <- run_escape_enrichment(
+        seurat_obj = merged_obj,
+        species    = cfg$pipeline$species_target,
+        library    = cfg$escape$library,
+        method     = cfg$escape$method,
+        min_size   = cfg$escape$min_size
+      )
+    }
 
-    # <--- ADDED FOR QC REPORT: generate HTML report ---------------------------------
+    # ── QC HTML Report ─────────────────────────────────────────────────────────
+    # BUG FIX #7: template lookup was using a fragile relative path
+    # (results_dir/../templates/qc_report.Rmd) that is almost never correct.
+    # Now we search in the config file's own directory first, then in getwd(),
+    # then honour an explicit cfg$report$rmd_template override.
     if (requireNamespace("rmarkdown", quietly = TRUE)) {
-      # Path to the R Markdown template (adjust to your actual location)
-      template_path <- file.path(cfg$pipeline$results_dir, "..", "templates", "qc_report.Rmd")
-      if (!file.exists(template_path)) {
-        message("   [WARNING] QC report template not found at ", template_path)
+      template_path <- cfg$report$rmd_template %||% {
+        candidates <- c(
+          file.path(cfg$pipeline$config_dir, "qc_report.Rmd"),
+          file.path(getwd(),                 "qc_report.Rmd")
+        )
+        found <- candidates[file.exists(candidates)]
+        if (length(found) > 0L) found[1L] else NULL
+      }
+
+      if (is.null(template_path)) {
+        message("   [WARNING] qc_report.Rmd not found – skipping HTML report.",
+                "\n            Place qc_report.Rmd alongside your config YAML or set",
+                "\n            cfg$report$rmd_template in your override config.")
       } else {
-        author <- cfg$report$author %||% "Pipeline User"
-        title  <- cfg$report$title %||% paste("QC Report -", comp_group)
         generate_qc_report(
-          seurat_obj    = merged_obj,
-          comp_group    = comp_group,
-          out_dir       = dirs$qc,
-          author        = author,
-          title         = title,
-          rmd_template  = template_path
+          seurat_obj   = merged_obj,
+          comp_group   = comp_group,
+          out_dir      = dirs$qc,          # HTML saved inside QC folder
+          author       = cfg$report$author %||% "Pipeline User",
+          title        = cfg$report$title  %||% paste("QC Report -", comp_group),
+          rmd_template = template_path,
+          cfg          = cfg
         )
       }
     } else {
       message("   [SKIP] rmarkdown not installed – QC report not generated.")
     }
-    # <--- END ADDED SECTION -------------------------------------------------------
 
+    # ── Main groupings ─────────────────────────────────────────────────────────
     groupings_main <- cfg$groupings_main
     if (is.null(groupings_main)) {
-      singler_names <- vapply(
-        cfg$singler$labels,
-        function(x) x$name,
-        character(1)
-      )
-      groupings_main <- unique(c(
-        cfg$processing$cluster_col,
-        singler_names
-      ))
+      singler_names  <- vapply(cfg$singler$labels, function(x) x$name, character(1))
+      groupings_main <- unique(c(cfg$processing$cluster_col, singler_names))
     }
 
     # ── Main analysis unit ─────────────────────────────────────────────────────
@@ -273,7 +281,7 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
     message("   [SKIP] columns not found: ", paste(skipped, collapse = ", "))
 
   Seurat::DefaultAssay(seurat_obj) <- "SCT"
-  
+
   if (inherits(seurat_obj[["SCT"]], "Assay5")) {
     message("   [INFO] Assay5 detected. Skipping PrepSCTFindMarkers (not required).")
   } else {
@@ -323,7 +331,7 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   group_dir <- file.path(base_dir, suffix, file_prefix, group_col)
   dirs      <- .make_analysis_dirs(group_dir)
 
-  # ── UMAP ──────────────────────────────────────────────────────────────────
+  # ── UMAP ────────────────────────────────────────────────────────────────────
   singler_entry <- Filter(function(l) l$name == group_col, cfg$singler$labels)
   is_fine       <- length(singler_entry) > 0L && isTRUE(singler_entry[[1L]]$is_fine)
   umap_w        <- if (is_fine) cfg$plot$umap_width_fine  else cfg$plot$umap_width_standard
@@ -350,15 +358,15 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     file.path(dirs$UMAP, paste0("UMAP_", file_prefix, "_", group_col, ".png")),
     width = umap_w, height = umap_h)
 
-  # ── Violin plots ──────────────────────────────────────────────────────────
+  # ── Violin plots ────────────────────────────────────────────────────────────
   generate_violin_plots(seurat_obj, genes_list, dirs$VlnPlot, file_prefix,
                          group_by_col = group_col)
 
-  # ── Proportions ───────────────────────────────────────────────────────────
+  # ── Proportions ─────────────────────────────────────────────────────────────
   run_proportion_analysis(seurat_obj, group_col, dirs$DEG, file_prefix)
   run_scproportion_test(seurat_obj,   group_col, dirs$DEG, file_prefix)
 
-  # ── DEG ───────────────────────────────────────────────────────────────────
+  # ── DEG ─────────────────────────────────────────────────────────────────────
   all_markers <- run_deg_analysis(seurat_obj,
     logfc_threshold     = cfg$deg$logfc_threshold,
     min_pct             = cfg$deg$min_pct,
@@ -387,7 +395,7 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     width           = cfg$plot$deg_umap_width,
     height          = cfg$plot$deg_umap_height)
 
-  # ── Average expression ────────────────────────────────────────────────────
+  # ── Average expression ──────────────────────────────────────────────────────
   for (layer in cfg$deg$avg_expression_layers) {
     save_average_expression(seurat_obj, dirs$DEG, file_prefix,
       group_by_col    = group_col,
@@ -397,30 +405,30 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
       table_row_names = cfg$deg$table_row_names)
   }
 
-  # ── Pseudobulk ────────────────────────────────────────────────────────────
+  # ── Pseudobulk ──────────────────────────────────────────────────────────────
   save_pseudobulk_counts(seurat_obj, dirs$DEG, file_prefix,
                          group_by_col = group_col,
                          table_sep    = cfg$deg$table_sep)
 
-  # ── Heatmaps ──────────────────────────────────────────────────────────────
+  # ── Heatmaps ────────────────────────────────────────────────────────────────
   generate_cluster_markers_and_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix)
 
   generate_cluster_zscore_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix,
                                   species_target = cfg$pipeline$species_target,
                                   top_n          = cfg$plot$top_genes_heatmap_n)
-  
+
   generate_expression_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix,
                                species_target = cfg$pipeline$species_target)
   generate_top_expressed_genes(seurat_obj, group_col, dirs$Heatmap, file_prefix)
 
-# ── Escape Enrichment Plots ───────────────────────────────────────────────
+  # ── Escape Enrichment Plots ─────────────────────────────────────────────────
   if (isTRUE(cfg$escape$run)) {
-    generate_escape_plots(seurat_obj, method = cfg$escape$method, 
-                          group_col = group_col, out_dir = group_dir, 
+    generate_escape_plots(seurat_obj, method = cfg$escape$method,
+                          group_col = group_col, out_dir = group_dir,
                           prefix = file_prefix)
   }
 
-  # ── Correlations ──────────────────────────────────────────────────────────
+  # ── Correlations ────────────────────────────────────────────────────────────
   cx <- cfg$genes$corr_genes_x
   cy <- cfg$genes$corr_genes_y
   if (!is.null(cx) && !is.null(cy) && length(cx) > 0L && length(cy) > 0L) {
@@ -462,8 +470,20 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   Seurat::DefaultAssay(sub_obj) <- "RNA"
   sub_obj <- SeuratObject::JoinLayers(sub_obj)
 
+  # BUG FIX #8: the YAML defines per-subset dimensions as pca_dims_from /
+  # pca_dims_to (same convention as the top-level processing block), but the
+  # original code passed subset_cfg$pca_dims which is always NULL after YAML
+  # parsing.  The function therefore always fell back to the default 1:20,
+  # ignoring the user-specified subset dimensions entirely.
+  pca_dims_sub <- if (!is.null(subset_cfg$pca_dims_from) &&
+                       !is.null(subset_cfg$pca_dims_to)) {
+    seq.int(subset_cfg$pca_dims_from, subset_cfg$pca_dims_to)
+  } else {
+    subset_cfg$pca_dims %||% cfg$processing$pca_dims
+  }
+
   sub_obj <- run_seurat_processing(sub_obj,
-    dims_pca   = subset_cfg$pca_dims,
+    dims_pca   = pca_dims_sub,
     resolution = cfg$processing$cluster_resolution,
     npcs       = cfg$processing$npcs,
     split_by   = "orig.ident")
@@ -489,17 +509,18 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
                     groupings  = groupings, genes_list = subset_cfg$genes,
                     base_dir   = base_dir, suffix = suffix,
                     deg_color  = subset_cfg$deg_color, cfg = cfg)
-                    
+
   if (!is.null(subset_cfg$genes) && length(subset_cfg$genes) > 0) {
-        message("   --> Generating Subcluster Heatmaps for: ", subset_cfg$display_name)
-        hm_dir <- file.path(base_dir, suffix, subset_cfg$display_name, "Heatmap")
-        generate_subcluster_heatmaps(
-          seurat_obj = sub_obj,
-          genes      = subset_cfg$genes,
-          out_dir    = hm_dir,
-          prefix     = subset_cfg$display_name
-        )
-      }
+    message("   --> Generating Subcluster Heatmaps for: ", subset_cfg$display_name)
+    hm_dir <- file.path(base_dir, suffix, subset_cfg$display_name, "Heatmap")
+    generate_subcluster_heatmaps(
+      seurat_obj = sub_obj,
+      genes      = subset_cfg$genes,
+      out_dir    = hm_dir,
+      prefix     = subset_cfg$display_name
+    )
+  }
+
   rdata_dir <- file.path(base_dir, suffix, "RData")
   .save_rdata(sub_obj, rdata_dir,
     paste0("Subset_",

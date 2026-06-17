@@ -4,21 +4,26 @@
 #' @return Merged named list
 #' @export
 load_pipeline_config <- function(base_config_path, override_config_path = NULL) {
-  
+
   # 1. Load the base template
   if (!file.exists(base_config_path)) stop("Base config not found: ", base_config_path)
   cfg <- yaml::yaml.load_file(base_config_path)
-  
+
   # 2. Merge overrides if provided
   if (!is.null(override_config_path) && file.exists(override_config_path)) {
     override_cfg <- yaml::yaml.load_file(override_config_path)
-    # modifyList recursively replaces base values with override values
     cfg <- utils::modifyList(cfg, override_cfg)
   }
 
+  # BUG FIX #1: store the directory of the config file so downstream code
+  # (e.g. QC report template lookup) can find sibling files reliably.
+  cfg$pipeline$config_dir <- dirname(normalizePath(base_config_path))
+
   # ── Required top-level keys ────────────────────────────────────────────────
+  # BUG FIX #2: removed "genes" from required — the human template has it
+  # commented-out by design; defaults below handle the missing key gracefully.
   required <- c("pipeline", "qc", "processing", "deg", "plot",
-                "species", "singler", "genes", "groupings_main")
+                "species", "singler", "groupings_main")
   missing  <- setdiff(required, names(cfg))
   if (length(missing) > 0L)
     stop("Config missing required keys: ", paste(missing, collapse = ", "))
@@ -27,18 +32,28 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$processing$cluster_col        <- cfg$processing$cluster_col        %||% "seurat_clusters"
   cfg$processing$condition_col      <- cfg$processing$condition_col      %||% "condition"
   cfg$processing$reduction          <- cfg$processing$reduction          %||% "umap"
-  cfg$processing$pca_dims           <- cfg$processing$pca_dims           %||% 1:20
   cfg$processing$cluster_resolution <- cfg$processing$cluster_resolution %||% 0.5
   cfg$processing$npcs               <- cfg$processing$npcs               %||% 50L
   cfg$processing$n_elbow_dims       <- cfg$processing$n_elbow_dims       %||% 30L
   cfg$processing$sct_assay          <- cfg$processing$sct_assay          %||% "SCT"
   cfg$processing$vars_to_regress    <- cfg$processing$vars_to_regress    %||% "percent.mt"
 
+  # BUG FIX #3: derive pca_dims as an integer sequence from pca_dims_from /
+  # pca_dims_to (the fields actually used in both YAML templates) before
+  # falling back to the hardcoded default.  Previously pca_dims was always
+  # NULL after YAML load, so the %||% silently overrode whatever the user set
+  # in the YAML.
+  if (is.null(cfg$processing$pca_dims)) {
+    from <- cfg$processing$pca_dims_from %||% 1L
+    to   <- cfg$processing$pca_dims_to   %||% 20L
+    cfg$processing$pca_dims <- seq.int(from, to)
+  }
+
   # ── Sex Scoring Defaults ─────────────────────────────────────────────
   cfg$sex_scoring$run      <- cfg$sex_scoring$run      %||% FALSE
   cfg$sex_scoring$regress  <- cfg$sex_scoring$regress  %||% FALSE
   cfg$sex_scoring$markers  <- cfg$sex_scoring$markers  %||% list(female = c(), male = c())
-  
+
   # ── Cell Cycle Defaults ───────────────────────────────────────────────────
   cfg$cell_cycle$run     <- cfg$cell_cycle$run     %||% FALSE
   cfg$cell_cycle$regress <- cfg$cell_cycle$regress %||% FALSE
@@ -56,15 +71,15 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$qc$min_cells      <- cfg$qc$min_cells      %||% 3L
 
   # ── DEG Defaults ──────────────────────────────────────────────────────────
-  cfg$deg$logfc_threshold     <- cfg$deg$logfc_threshold     %||% 0.25
-  cfg$deg$min_pct             <- cfg$deg$min_pct             %||% 0.1
-  cfg$deg$min_p_val_adj       <- cfg$deg$min_p_val_adj       %||% 0.05
-  cfg$deg$min_cells_per_group <- cfg$deg$min_cells_per_group %||% 10L
-  cfg$deg$min_deg_display     <- cfg$deg$min_deg_display     %||% 5L
+  cfg$deg$logfc_threshold       <- cfg$deg$logfc_threshold       %||% 0.25
+  cfg$deg$min_pct               <- cfg$deg$min_pct               %||% 0.1
+  cfg$deg$min_p_val_adj         <- cfg$deg$min_p_val_adj         %||% 0.05
+  cfg$deg$min_cells_per_group   <- cfg$deg$min_cells_per_group   %||% 10L
+  cfg$deg$min_deg_display       <- cfg$deg$min_deg_display       %||% 5L
   cfg$deg$avg_expression_layers <- cfg$deg$avg_expression_layers %||% list("data")
-  cfg$deg$table_sep           <- cfg$deg$table_sep           %||% "\t"
-  cfg$deg$table_quote         <- cfg$deg$table_quote         %||% FALSE
-  cfg$deg$table_row_names     <- cfg$deg$table_row_names     %||% FALSE
+  cfg$deg$table_sep             <- cfg$deg$table_sep             %||% "\t"
+  cfg$deg$table_quote           <- cfg$deg$table_quote           %||% FALSE
+  cfg$deg$table_row_names       <- cfg$deg$table_row_names       %||% FALSE
 
   # ── Plotting Defaults ─────────────────────────────────────────────────────
   cfg$plot$top_genes_heatmap_n  <- cfg$plot$top_genes_heatmap_n  %||% 10L
@@ -93,10 +108,10 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$singler$labels              <- cfg$singler$labels              %||% list()
   cfg$singler$label_names         <- sapply(cfg$singler$labels, `[[`, "name")
 
-# ── Escape Defaults ───────────────────────────────────────────────────────
+  # ── Escape Defaults ───────────────────────────────────────────────────────
   cfg$escape$run      <- cfg$escape$run      %||% FALSE
   cfg$escape$method   <- cfg$escape$method   %||% "ssGSEA"
-  cfg$escape$library  <- cfg$escape$library  %||% "H"       # MSigDB Hallmark
+  cfg$escape$library  <- cfg$escape$library  %||% "H"
   cfg$escape$min_size <- cfg$escape$min_size %||% 5
 
   # ── Labeling & Gene Defaults ─────────────────────────────────────────────
@@ -104,14 +119,22 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$labeling$unassigned_suffix         <- cfg$labeling$unassigned_suffix         %||% "_Unassigned"
   cfg$labeling$marker_positive_threshold <- cfg$labeling$marker_positive_threshold %||% 0.1
   cfg$subsets            <- cfg$subsets            %||% list()
-  cfg$genes$corr_genes_x <- cfg$genes$corr_genes_x %||% NULL
-  cfg$genes$corr_genes_y <- cfg$genes$corr_genes_y %||% NULL
 
-# ── Parallelization Defaults ──────────────────────────────────────────
-  cfg$parallel$enable           <- cfg$parallel$enable           %||% FALSE
-  cfg$parallel$workers          <- cfg$parallel$workers          %||% 4L
-  cfg$parallel$strategy         <- cfg$parallel$strategy         %||% "multisession"
-  cfg$parallel$max_size_gb      <- cfg$parallel$max_size_gb      %||% 8.0
+  # BUG FIX #4: guard against cfg$genes being NULL (human template has the
+  # genes block commented out).  NULL$x <- value silently fails in R, leaving
+  # cfg$genes as NULL and making every downstream cfg$genes$* access return
+  # NULL without any error — which is fine — but the required-keys check
+  # above was also failing.  Initialise the list if absent, then set fields.
+  if (is.null(cfg$genes)) cfg$genes <- list()
+  cfg$genes$genes_to_plot <- cfg$genes$genes_to_plot %||% NULL
+  cfg$genes$corr_genes_x  <- cfg$genes$corr_genes_x  %||% NULL
+  cfg$genes$corr_genes_y  <- cfg$genes$corr_genes_y  %||% NULL
+
+  # ── Parallelization Defaults ──────────────────────────────────────────────
+  cfg$parallel$enable      <- cfg$parallel$enable      %||% FALSE
+  cfg$parallel$workers     <- cfg$parallel$workers     %||% 4L
+  cfg$parallel$strategy    <- cfg$parallel$strategy    %||% "multisession"
+  cfg$parallel$max_size_gb <- cfg$parallel$max_size_gb %||% 8.0
 
   return(cfg)
 }
@@ -129,12 +152,9 @@ load_sample_table <- function(cfg) {
 
   if (is.character(st) && length(st) == 1L && file.exists(st)) {
     df <- utils::read.delim(st, sep = "\t", stringsAsFactors = FALSE, check.names = FALSE)
-  } 
-
-  else if (is.list(st)) {
+  } else if (is.list(st)) {
     df <- do.call(dplyr::bind_rows, lapply(st, as.data.frame, stringsAsFactors = FALSE))
-  } 
-  else {
+  } else {
     stop("pipeline$sample_table must be a valid file path or a YAML list.")
   }
 
@@ -144,10 +164,10 @@ load_sample_table <- function(cfg) {
 
   required_cols <- c("folder_id", "protocol", "comparison_group")
   missing <- setdiff(required_cols, colnames(df))
-  
   if (length(missing) > 0L) {
     stop("Sample table missing columns: ", paste(missing, collapse = ", "))
   }
+
   df$folder_id        <- as.character(df$folder_id)
   df$protocol         <- as.character(df$protocol)
   df$comparison_group <- as.character(df$comparison_group)
