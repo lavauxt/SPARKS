@@ -254,7 +254,18 @@ generate_qc_report <- function(seurat_obj, comp_group, out_dir,
   }
 
   make_dir(out_dir)
-  output_file <- file.path(out_dir, paste0("QC_report_", comp_group, ".html"))
+
+  # BUG FIX #12: rmarkdown::render() changes the working directory to the
+  # location of the input Rmd during knitting.  If output_file is a *relative*
+  # path it is therefore resolved against the Rmd's directory, not the caller's
+  # working directory — so the HTML ended up in the package/inst folder instead
+  # of the QC output folder.  normalizePath(..., mustWork = FALSE) converts the
+  # path to an absolute one before render() is called, guaranteeing the file
+  # always lands in out_dir regardless of where the Rmd lives.
+  output_file <- normalizePath(
+    file.path(out_dir, paste0("QC_report_", comp_group, ".html")),
+    mustWork = FALSE
+  )
 
   rmarkdown::render(
     input       = rmd_template,
@@ -264,13 +275,76 @@ generate_qc_report <- function(seurat_obj, comp_group, out_dir,
       comp_group = comp_group,
       author     = author,
       title      = title,
-      out_dir    = out_dir,
-      cfg        = cfg          # now forwarded so the Rmd can show QC params
+      out_dir    = normalizePath(out_dir, mustWork = FALSE),
+      cfg        = cfg
     ),
     envir = new.env(parent = globalenv()),
     quiet = FALSE
   )
 
   message("   QC report saved to: ", output_file)
+  invisible(output_file)
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+#' Generate an interactive HTML results report for a comparison group
+#'
+#' Renders \code{results_report.Rmd} into \code{out_dir} as
+#' \code{Results_report_{comp_group}.html}.
+#'
+#' @param seurat_obj A Seurat object after full processing.
+#' @param comp_group Character. Comparison group name.
+#' @param out_dir Character. Output directory — the HTML is saved here.
+#' @param groupings Character vector. Metadata columns used for grouping
+#'   (e.g. "seurat_clusters", "singleR_labels_main"). Passed to the Rmd so it
+#'   can render one interactive UMAP / table per grouping.
+#' @param author Character. Author name shown in the report.
+#' @param title Character. Report title.
+#' @param rmd_template Character. Path to results_report.Rmd.
+#' @param cfg Named list. Full pipeline config.
+#' @return Invisibly, the path to the generated HTML file.
+#' @export
+generate_results_report <- function(seurat_obj, comp_group, out_dir,
+                                    groupings    = NULL,
+                                    author       = "Pipeline",
+                                    title        = NULL,
+                                    rmd_template = NULL,
+                                    cfg          = NULL) {
+
+  if (!requireNamespace("rmarkdown", quietly = TRUE))
+    stop("Package 'rmarkdown' is needed. Please install it: install.packages('rmarkdown')")
+
+  if (is.null(title)) title <- paste("Results Report -", comp_group)
+
+  if (is.null(rmd_template) || !file.exists(rmd_template)) {
+    message("   [WARNING] generate_results_report: template not found at '",
+            rmd_template %||% "<NULL>", "'. Skipping results report.")
+    return(invisible(NULL))
+  }
+
+  make_dir(out_dir)
+
+  output_file <- normalizePath(
+    file.path(out_dir, paste0("Results_report_", comp_group, ".html")),
+    mustWork = FALSE
+  )
+
+  rmarkdown::render(
+    input       = rmd_template,
+    output_file = output_file,
+    params      = list(
+      seurat_obj = seurat_obj,
+      comp_group = comp_group,
+      author     = author,
+      title      = title,
+      out_dir    = normalizePath(out_dir, mustWork = FALSE),
+      cfg        = cfg,
+      groupings  = groupings
+    ),
+    envir = new.env(parent = globalenv()),
+    quiet = FALSE
+  )
+
+  message("   Results report saved to: ", output_file)
   invisible(output_file)
 }

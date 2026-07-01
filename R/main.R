@@ -243,6 +243,35 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       )
     }
 
+    # ── Interactive Results HTML Report ────────────────────────────────────────
+    if (requireNamespace("rmarkdown", quietly = TRUE)) {
+      results_template_path <- cfg$report$results_rmd_template %||% {
+        candidates <- c(
+          file.path(cfg$pipeline$config_dir, "results_report.Rmd"),
+          file.path(getwd(),                 "results_report.Rmd")
+        )
+        found <- candidates[file.exists(candidates)]
+        if (length(found) > 0L) found[1L] else NULL
+      }
+
+      if (is.null(results_template_path)) {
+        message("   [WARNING] results_report.Rmd not found – skipping Results report.",
+                "\n            Place results_report.Rmd alongside your config YAML or set",
+                "\n            cfg$report$results_rmd_template in your override config.")
+      } else {
+        generate_results_report(
+          seurat_obj   = merged_obj,
+          comp_group   = comp_group,
+          out_dir      = dirs$base,          # saved in group root, not QC sub-folder
+          groupings    = groupings_main,
+          author       = cfg$report$author %||% "Pipeline User",
+          title        = cfg$report$title  %||% paste("Results Report -", comp_group),
+          rmd_template = results_template_path,
+          cfg          = cfg
+        )
+      }
+    }
+
     .save_rdata(merged_obj, dirs$rdata, paste0("Merged_", comp_group))
     rm(merged_obj); gc()
   }
@@ -469,6 +498,21 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   sub_obj <- subset(main_obj, cells = colnames(main_obj)[idx])
   Seurat::DefaultAssay(sub_obj) <- "RNA"
   sub_obj <- SeuratObject::JoinLayers(sub_obj)
+
+  # BUG FIX #13: JoinLayers restores "counts" from per-sample layers but does
+  # NOT guarantee that the "data" (log-normalised) layer is present in the
+  # subset — SCTransform may have dropped it from the parent object to save
+  # memory.  run_seurat_processing() will create a fresh SCT assay, but the
+  # RNA "data" layer is still needed by run_gene_correlations() afterwards.
+  # Re-running NormalizeData here is cheap and ensures it is always available.
+  available_subset_layers <- tryCatch(
+    SeuratObject::Layers(sub_obj[["RNA"]]),
+    error = function(e) character(0)
+  )
+  if (!"data" %in% available_subset_layers && "counts" %in% available_subset_layers) {
+    message("   [INFO] RNA 'data' layer absent in subset; running NormalizeData.")
+    sub_obj <- Seurat::NormalizeData(sub_obj, assay = "RNA", verbose = FALSE)
+  }
 
   # BUG FIX #8: the YAML defines per-subset dimensions as pca_dims_from /
   # pca_dims_to (same convention as the top-level processing block), but the

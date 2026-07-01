@@ -237,8 +237,11 @@ save_pseudobulk_counts <- function(seurat_obj, output_dir, file_prefix,
                                        seurat_obj@meta.data[[sample_col]], sep = "_")
   Seurat::Idents(seurat_obj) <- "pseudobulk_group"
 
+  # BUG FIX #11 (companion): specify layer = "counts" explicitly so Seurat v5
+  # does not fall back to a "data" layer search and emit the noisy warning.
   agg <- safe_run({
-    Seurat::AggregateExpression(seurat_obj, assays = "RNA", return.seurat = FALSE)[["RNA"]]
+    Seurat::AggregateExpression(seurat_obj, assays = "RNA",
+                                layer = "counts", return.seurat = FALSE)[["RNA"]]
   }, label = "Pseudobulk AggregateExpression")
 
   if (is.null(agg)) return(invisible(NULL))
@@ -407,16 +410,38 @@ run_gene_correlations <- function(seurat_obj,
 
   message("--- Starting gene correlation analysis (Grouping: ", grouping_col, ") ---")
   message("   Using assay: ", assay)
-  
+
   Seurat::DefaultAssay(seurat_obj) <- assay
   corr_dir <- file.path(out_dir, "Correlation")
   if (!dir.exists(corr_dir)) dir.create(corr_dir, recursive = TRUE)
 
   groups <- unique(as.character(seurat_obj@meta.data[[grouping_col]]))
   groups <- groups[!is.na(groups) & !grepl("Unassigned", groups)]
-  
+
   conditions <- unique(as.character(seurat_obj@meta.data[[cond_col]]))
   conditions <- conditions[!is.na(conditions)]
+
+  # BUG FIX #11: After SCTransform, Seurat v5 may drop the RNA "data" layer to
+  # save memory, leaving only "counts".  Calling GetAssayData(layer = "data") in
+  # that state triggers:
+  #   Warning: Default search for "data" layer in "RNA" assay yielded no results;
+  #            utilizing "counts" layer instead.
+  # Fix: inspect available layers first.  If "data" is absent but "counts" is
+  # present, re-run NormalizeData to recreate it cleanly — no suppressWarnings().
+  available_layers <- tryCatch(
+    SeuratObject::Layers(seurat_obj[[assay]]),
+    error = function(e) character(0)
+  )
+  if (!"data" %in% available_layers) {
+    if ("counts" %in% available_layers) {
+      message("   [INFO] 'data' layer absent in '", assay, "' assay after SCTransform. ",
+              "Re-running NormalizeData to restore log-normalised values.")
+      seurat_obj <- Seurat::NormalizeData(seurat_obj, assay = assay, verbose = FALSE)
+    } else {
+      message("   [SKIP Correlation] No usable layers found in '", assay, "' assay.")
+      return(invisible(NULL))
+    }
+  }
   expr <- Seurat::GetAssayData(seurat_obj, assay = assay, layer = "data")
 
   # --- Report original and missing genes for set X ---
