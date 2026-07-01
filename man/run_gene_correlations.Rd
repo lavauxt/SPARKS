@@ -2,7 +2,7 @@
 % Please edit documentation in R/analysis.R
 \name{run_gene_correlations}
 \alias{run_gene_correlations}
-\title{Compute gene-gene correlation matrices per group and condition}
+\title{Compute gene-gene correlation matrices per group and condition, plus global}
 \usage{
 run_gene_correlations(
   seurat_obj,
@@ -12,7 +12,9 @@ run_gene_correlations(
   out_dir,
   prefix,
   cond_col = "condition",
-  method = "pearson"
+  method = "pearson",
+  global_plot = TRUE,
+  assay = "SCT"
 )
 }
 \arguments{
@@ -29,16 +31,18 @@ run_gene_correlations(
 \item{prefix}{Character. Prefix added to output file names.}
 
 \item{cond_col}{Character. Metadata column used to define conditions
-(default: "analysis_group").}
+(default: "condition").}
 
 \item{method}{Character. Correlation method to use ("pearson" or "spearman").}
+
+\item{global_plot}{Logical. If TRUE, generate an overall correlation heatmap
+using all cells (ignoring grouping_col and cond_col). Default TRUE.}
 }
 \value{
 NULL (invisibly). Writes heatmaps and correlation tables to disk.
 }
 \description{
 This function computes pairwise correlations between two gene sets
-(genes_x vs genes_y) within each group and condition of a Seurat object.
-It generates correlation matrices, saves heatmaps, and exports long-format
-correlation tables.
+(genes_x vs genes_y) within each group and condition, and optionally
+across all cells (global). Generates heatmaps and exports long-format tables.
 }

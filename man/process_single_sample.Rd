@@ -14,6 +14,7 @@ process_single_sample(
   mt_pattern,
   genes_to_remove,
   min_features,
+  max_features,
   max_counts,
   max_mt_percent,
   min_cells,

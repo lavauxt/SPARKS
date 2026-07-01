@@ -130,6 +130,24 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$genes$corr_genes_x  <- cfg$genes$corr_genes_x  %||% NULL
   cfg$genes$corr_genes_y  <- cfg$genes$corr_genes_y  %||% NULL
 
+  # ── Gene Signature Panels ─────────────────────────────────────────────────
+  # Named gene lists (e.g. "Lipid_Scavenger", "Vascular_Tightness") for which
+  # a per-cell z-score heatmap, an aggregated z-score heatmap, and a DotPlot
+  # (avg expression + pct expressed) are generated automatically for every
+  # grouping column of every analysis unit (Main AND every subset/subcluster).
+  # Each entry: list(name = "...", genes = c("Gene1", "Gene2", ...))
+  cfg$gene_signatures <- cfg$gene_signatures %||% list()
+  if (length(cfg$gene_signatures) > 0L) {
+    bad <- vapply(cfg$gene_signatures, function(s) {
+      is.null(s$name) || is.null(s$genes) || length(s$genes) == 0L
+    }, logical(1))
+    if (any(bad)) {
+      warning("gene_signatures entries missing 'name' or 'genes' will be skipped: ",
+              paste(which(bad), collapse = ", "))
+      cfg$gene_signatures <- cfg$gene_signatures[!bad]
+    }
+  }
+
   # ── Parallelization Defaults ──────────────────────────────────────────────
   cfg$parallel$enable      <- cfg$parallel$enable      %||% FALSE
   cfg$parallel$workers     <- cfg$parallel$workers     %||% 4L

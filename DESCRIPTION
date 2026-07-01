@@ -11,8 +11,8 @@ Collate:
     'utils.R'
     'config.R'
     'analysis.R'
-    'escape_analysis.R'
-    'pipeline_core.R'
+    'enrichment_analysis.R'
+    'main.R'
     'processing.R'
     'qc_utils.R'
     'sex_scoring.R'
@@ -47,8 +47,16 @@ Imports:
     tidyr,
     stringr,
     harmony
+Suggests:
+    rmarkdown,
+    knitr,
+    DT,
+    plotly,
+    htmltools,
+    RColorBrewer
 Remotes:
     rpolicastro/scProportionTest,
     BorchLab/escape
 RoxygenNote: 8.0.0
+VignetteBuilder: knitr
 

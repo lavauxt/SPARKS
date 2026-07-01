@@ -38,9 +38,22 @@ You can install the development version of SPARKS from GitHub:
 # Install devtools if not already installed
 if (!require("devtools", quietly = TRUE)) install.packages("devtools")
 
-# Install SPARKS
-devtools::install_github("lavauxt/SPARKS")
+# Install SPARKS (dependencies = TRUE also pulls in the optional report
+# packages: rmarkdown, knitr, DT, plotly, htmltools, RColorBrewer)
+devtools::install_github("lavauxt/SPARKS", dependencies = TRUE)
 ```
+
+> **HTML reports (`QC_report_*.html` / `Results_report_*.html`)** are
+> generated automatically at the end of each comparison group's run.
+> They require the `rmarkdown` package (plus `DT`/`plotly`/`htmltools`/
+> `RColorBrewer` for the interactive Results report). If you installed
+> SPARKS without `dependencies = TRUE`, install them once with:
+> ```r
+> install.packages(c("rmarkdown", "knitr", "DT", "plotly", "htmltools", "RColorBrewer"))
+> ```
+> The `.Rmd` templates ship inside the installed package (`inst/rmd/`) and
+> are located automatically — you no longer need to copy `qc_report.Rmd` /
+> `results_report.Rmd` next to your config file for reports to generate.
 
 ## Quick Start
 
@@ -188,6 +201,32 @@ Directs automated expression tracing visualization outputs and coordinate matrix
     corr_genes_x: ["S1pr1", "S1pr2"] # Coordinate factors driving expression correlation matrices
     corr_genes_y: ["Ccl19", "Cxcl13"]
 ```
+*  Gene Signature Panels (gene_signatures)
+Named gene lists that get a dedicated per-cell z-score heatmap, an averaged
+z-score heatmap, and a DotPlot (average expression + percent expressed)
+automatically generated for **every grouping column** — `seurat_clusters`,
+every SingleR label column, and every subset's own cluster/type column —
+of **both** the Main analysis unit and every subset/subcluster defined below.
+No extra wiring per subset is needed: add a signature once and it is applied
+everywhere.
+```
+  gene_signatures:
+    - name: "Lipid_Scavenger"
+      genes: ["Cd36", "Ackr3", "Ackr4", "Plpp3", "Stab1", "Stab2", "Cav1", "Cav2", "Dab2"]
+    - name: "Vascular_Tightness"
+      genes: ["Cdh5", "Cldn5", "Pdgfa", "Pdgfb", "Tek", "Tjp1", "Wnt2", "Emcn"]
+```
+Output (per grouping column `<group_col>`, per analysis unit `<Main|SubsetName>`):
+```
+<Main|SubsetName>/<group_col>/Heatmap/
+  ├── <Unit>_<group_col>_<Signature>_Heatmap_PerCell.png    # z-score per cell
+  ├── <Unit>_<group_col>_<Signature>_Heatmap_Aggregated.png # z-score averaged per group
+  └── <Unit>_<group_col>_<Signature>_DotPlot.png            # avg expression + % expressed
+```
+Genes not present in the dataset are skipped automatically (with a message);
+a signature is skipped entirely if fewer than 2 of its genes are found, or if
+the grouping column has fewer than 2 groups.
+
 *  Declarative Sub-Clustering Directives (subsets)
 Defines cell population routing rules for automated secondary extraction, 
 re-clustering, and sub-population profiling.
@@ -211,21 +250,51 @@ The pipeline generates an organized results directory:
 results_dir/
   └── Group_1/
       ├── QC/
-      │   ├── VlnPlot_Group_1.png         # Ingestion profile distributions
-      │   └── ScatterPlot_Group_1.png     # Depth vs feature count tracking
-      ├── UMAP/
-      │   ├── UMAP_Clusters.png           # Louvain resolution partitions
-      │   ├── UMAP_Condition.png          # Protocol separation check (WT vs KO)
-      │   └── UMAP_SingleR_labels_*.png   # Automated annotation layer tracking maps
-      ├── DEG/
-      │   ├── DEG_Analysis_Table.tsv      # Comprehensive differential summary statistics
-      │   └── Top_Markers_Heatmap.png     # Matrix visual tracing altered features
+      │   ├── VlnPlot_Group_1.png            # Ingestion profile distributions
+      │   ├── ScatterPlot_Group_1.png        # Depth vs feature count tracking
+      │   └── QC_report_Group_1.html         # Auto-generated QC HTML report
+      ├── Main/                              # (repeated per subset, e.g. Fibroblasts/, Endothelial/)
+      │   └── seurat_clusters/               # (repeated per grouping: singleR labels, type_col, ...)
+      │       ├── UMAP/
+      │       │   ├── UMAP_Main_seurat_clusters.png
+      │       │   └── UMAP_DEG_Main_seurat_clusters.png
+      │       ├── DEG/
+      │       │   └── AllMarkers_Main_seurat_clusters.txt
+      │       ├── VlnPlot/
+      │       └── Heatmap/
+      │           ├── ZScore_TopGenes_Main_seurat_clusters.png
+      │           ├── ExprHeatmap_Main_seurat_clusters.png
+      │           ├── Main_seurat_clusters_Lipid_Scavenger_Heatmap_PerCell.png
+      │           ├── Main_seurat_clusters_Lipid_Scavenger_Heatmap_Aggregated.png
+      │           ├── Main_seurat_clusters_Lipid_Scavenger_DotPlot.png
+      │           ├── Main_seurat_clusters_Vascular_Tightness_Heatmap_PerCell.png
+      │           ├── Main_seurat_clusters_Vascular_Tightness_Heatmap_Aggregated.png
+      │           └── Main_seurat_clusters_Vascular_Tightness_DotPlot.png
       ├── Escape/
-      │   ├── Enrichment_Scores.tsv       # Pathway scores per single cell
-      │   └── Pathway_Heatmap.png         # Cluster-averaged pathway enrichment profiles
+      │   ├── Enrichment_Scores.tsv          # Pathway scores per single cell
+      │   └── Pathway_Heatmap.png            # Cluster-averaged pathway enrichment profiles
+      ├── Results_report_Group_1.html        # Auto-generated interactive Results HTML report
       └── RData/
-          └── Group_1_Seurat_Processed.rds # Production-ready Seurat binary object file
+          └── Group_1_Seurat_Processed.rds   # Production-ready Seurat binary object file
 ```
+## Changelog
+
+- **Fixed**: HTML reports (`QC_report_*.html`, `Results_report_*.html`) were
+  silently never generated once SPARKS was installed as a package, because
+  the `.Rmd` templates were not shipped inside the package and the lookup
+  only checked the config's directory and the current working directory.
+  Templates now live in `inst/rmd/` and are located via `system.file()` as a
+  final fallback. `rmarkdown`, `knitr`, `DT`, `plotly`, `htmltools`, and
+  `RColorBrewer` are now declared in `Suggests` so `dependencies = TRUE`
+  installs them.
+- **Fixed**: `DESCRIPTION`'s `Collate` field referenced `pipeline_core.R` and
+  `escape_analysis.R`, which don't exist in this package — the real files are
+  `main.R` and `enrichment_analysis.R`. Corrected to avoid collation issues.
+- **Added**: `gene_signatures` config block — named gene panels (e.g. a lipid
+  scavenger receptor set, a vascular tightness/junction set) that
+  automatically get a per-cell z-score heatmap, an averaged z-score heatmap,
+  and a DotPlot for every grouping column of the Main unit and every subset.
+
 ## License
 
 This project is licensed under the [GNU General Public License v3.0](LICENSE).

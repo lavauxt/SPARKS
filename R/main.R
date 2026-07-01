@@ -187,18 +187,28 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     # then honour an explicit cfg$report$rmd_template override.
     if (requireNamespace("rmarkdown", quietly = TRUE)) {
       template_path <- cfg$report$rmd_template %||% {
+        # BUG FIX #14: when SPARKS is installed via devtools::install_github()
+        # (as documented in the README), qc_report.Rmd is NOT sitting next to
+        # the user's config YAML or in getwd() unless they manually copy it —
+        # this is why the report silently never generated. The template now
+        # ships inside inst/rmd/ and is located via system.file() as the
+        # final fallback, so it always resolves for an installed package.
         candidates <- c(
           file.path(cfg$pipeline$config_dir, "qc_report.Rmd"),
-          file.path(getwd(),                 "qc_report.Rmd")
+          file.path(getwd(),                 "qc_report.Rmd"),
+          system.file("rmd", "qc_report.Rmd", package = "SPARKS")
         )
+        candidates <- candidates[nzchar(candidates)]
         found <- candidates[file.exists(candidates)]
         if (length(found) > 0L) found[1L] else NULL
       }
 
       if (is.null(template_path)) {
         message("   [WARNING] qc_report.Rmd not found – skipping HTML report.",
-                "\n            Place qc_report.Rmd alongside your config YAML or set",
-                "\n            cfg$report$rmd_template in your override config.")
+                "\n            Place qc_report.Rmd alongside your config YAML,",
+                "\n            set cfg$report$rmd_template in your override config,",
+                "\n            or reinstall SPARKS so inst/rmd/qc_report.Rmd ships",
+                "\n            with the package.")
       } else {
         generate_qc_report(
           seurat_obj   = merged_obj,
@@ -246,18 +256,24 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     # ── Interactive Results HTML Report ────────────────────────────────────────
     if (requireNamespace("rmarkdown", quietly = TRUE)) {
       results_template_path <- cfg$report$results_rmd_template %||% {
+        # BUG FIX #14 (see qc_report.Rmd lookup above): same system.file()
+        # fallback so the results report is found for an installed package.
         candidates <- c(
           file.path(cfg$pipeline$config_dir, "results_report.Rmd"),
-          file.path(getwd(),                 "results_report.Rmd")
+          file.path(getwd(),                 "results_report.Rmd"),
+          system.file("rmd", "results_report.Rmd", package = "SPARKS")
         )
+        candidates <- candidates[nzchar(candidates)]
         found <- candidates[file.exists(candidates)]
         if (length(found) > 0L) found[1L] else NULL
       }
 
       if (is.null(results_template_path)) {
         message("   [WARNING] results_report.Rmd not found – skipping Results report.",
-                "\n            Place results_report.Rmd alongside your config YAML or set",
-                "\n            cfg$report$results_rmd_template in your override config.")
+                "\n            Place results_report.Rmd alongside your config YAML,",
+                "\n            set cfg$report$results_rmd_template in your override config,",
+                "\n            or reinstall SPARKS so inst/rmd/results_report.Rmd ships",
+                "\n            with the package.")
       } else {
         generate_results_report(
           seurat_obj   = merged_obj,
@@ -449,6 +465,26 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   generate_expression_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix,
                                species_target = cfg$pipeline$species_target)
   generate_top_expressed_genes(seurat_obj, group_col, dirs$Heatmap, file_prefix)
+
+  # ── Gene Signature Panels (heatmap + dotplot) ───────────────────────────────
+  # Runs for every grouping column of every analysis unit, so it automatically
+  # covers the Main unit's clusters/singleR labels AND every subset's own
+  # clusters/subcluster labels (this function is called once per grouping,
+  # for Main and for each subset via .run_subset -> run_analysis_unit).
+  for (sig in cfg$gene_signatures) {
+    safe_run(
+      generate_gene_signature_plots(
+        seurat_obj     = seurat_obj,
+        genes          = sig$genes,
+        out_dir        = dirs$Heatmap,
+        prefix         = file_prefix,
+        group_by_col   = group_col,
+        signature_name = sig$name,
+        condition_col  = cfg$processing$condition_col
+      ),
+      label = paste0("Gene Signature '", sig$name, "': ", file_prefix, " | ", group_col)
+    )
+  }
 
   # ── Escape Enrichment Plots ─────────────────────────────────────────────────
   if (isTRUE(cfg$escape$run)) {

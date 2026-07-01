@@ -159,6 +159,37 @@ genes:
     - "Cr2"
     - "Mfge8"
 
+# ── Gene Signature Panels ───────────────────────────────────────────────────
+# For each entry below, SPARKS auto-generates, for every grouping column
+# (seurat_clusters, singleR labels, subset type_col, ...) of the Main unit
+# AND of every subset/subcluster:
+#   - <name>_Heatmap_PerCell.png    (per-cell z-score, DoHeatmap style)
+#   - <name>_Heatmap_Aggregated.png (group-averaged z-score heatmap)
+#   - <name>_DotPlot.png            (avg expression + pct expressed, DotPlot)
+# Output path: results_dir/<comparison_group>/<Main|SubsetName>/<group_col>/Heatmap/
+gene_signatures:
+  - name:  "Vascular_Tightness"
+    genes:
+      - "Cdh5"
+      - "Cldn5"
+      - "Pdgfa"
+      - "Pdgfb"
+      - "Tek"
+      - "Tjp1"
+      - "Wnt2"
+      - "Emcn"
+  - name:  "Lipid_Scavenger"
+    genes:
+      - "Cd36"
+      - "Ackr3"
+      - "Ackr4"
+      - "Plpp3"
+      - "Stab1"
+      - "Stab2"
+      - "Cav1"
+      - "Cav2"
+      - "Dab2"
+
 # ── Main groupings (null = auto: cluster_col + all singler label names) ─────────
 groupings_main: ~
 

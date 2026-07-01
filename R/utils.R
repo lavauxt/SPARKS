@@ -181,6 +181,26 @@ get_junk_pattern <- function(species = "Mouse") {
   has_data
 }
 
+#' Adaptive label style for DoHeatmap group-bar text, based on group count
+#'
+#' With many groups (e.g. singleR_labels_fine, ~40-90 categories), horizontal
+#' or 45-degree text overlaps and becomes unreadable. This scales the angle
+#' toward vertical and shrinks the font as the group count grows.
+#' @param n Integer. Number of distinct groups/columns being labeled
+#' @return Named list: angle, hjust, size
+#' @export
+.heatmap_label_params <- function(n) {
+  if (n > 20) {
+    list(angle = 90, hjust = 0, size = 2.5)
+  } else if (n > 8) {
+    list(angle = 90, hjust = 0, size = 3)
+  } else if (n > 4) {
+    list(angle = 90, hjust = 0, size = 3.5)
+  } else {
+    list(angle = 0, hjust = 0.5, size = 4)
+  }
+}
+
 .save_rdata <- function(obj, dir, name) {
   make_dir(dir)
   saveRDS(obj, file = file.path(dir, paste0(name, ".rds")))
