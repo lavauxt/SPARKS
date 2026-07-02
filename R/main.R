@@ -462,15 +462,22 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
                                   species_target = cfg$pipeline$species_target,
                                   top_n          = cfg$plot$top_genes_heatmap_n)
 
+  generate_cluster_zscore_heatmap_split_condition(
+    seurat_obj,
+    group_by_col    = group_col,
+    condition_col   = cfg$processing$condition_col,
+    out_dir         = dirs$Heatmap,
+    prefix          = file_prefix,
+    species_target  = cfg$pipeline$species_target,
+    top_n           = cfg$plot$top_genes_heatmap_n
+  )
+
   generate_expression_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix,
                                species_target = cfg$pipeline$species_target)
   generate_top_expressed_genes(seurat_obj, group_col, dirs$Heatmap, file_prefix)
 
   # ── Gene Signature Panels (heatmap + dotplot) ───────────────────────────────
-  # Runs for every grouping column of every analysis unit, so it automatically
-  # covers the Main unit's clusters/singleR labels AND every subset's own
-  # clusters/subcluster labels (this function is called once per grouping,
-  # for Main and for each subset via .run_subset -> run_analysis_unit).
+  # Combined plots (all groups together)
   for (sig in cfg$gene_signatures) {
     safe_run(
       generate_gene_signature_plots(
@@ -483,6 +490,23 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
         condition_col  = cfg$processing$condition_col
       ),
       label = paste0("Gene Signature '", sig$name, "': ", file_prefix, " | ", group_col)
+    )
+  }
+
+  # NEW: Per-group DotPlots for each gene signature
+  for (sig in cfg$gene_signatures) {
+    safe_run(
+      generate_gene_signature_per_group_dotplots(
+        seurat_obj          = seurat_obj,
+        genes               = sig$genes,
+        out_dir             = dirs$Heatmap,
+        prefix              = file_prefix,
+        group_by_col        = group_col,
+        signature_name      = sig$name,
+        condition_col       = cfg$processing$condition_col,
+        min_cells_per_group = cfg$labeling$min_subset_cells %||% 10L
+      ),
+      label = paste0("Per-group DotPlot '", sig$name, "': ", file_prefix, " | ", group_col)
     )
   }
 

@@ -646,19 +646,22 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
   }
 
   # ── 3. DotPlot (average expression + percent expressed) ────────────────────
+  # Updated: red-blue gradient, explicit legend title "Avg Expression"
   p_dot <- safe_run({
     dp <- if (has_condition) {
-      n_cond   <- length(unique(as.character(seurat_obj@meta.data[[condition_col]])))
-      dot_cols <- scales::hue_pal()(n_cond)
+      # condition split -> use red-blue gradient for expression
       Seurat::DotPlot(
         seurat_obj,
         features = genes,
         group.by = group_by_col,
         split.by = condition_col,
-        cols     = dot_cols
+        cols     = c("blue", "red")   # low = blue, high = red
       )
     } else {
-      Seurat::DotPlot(seurat_obj, features = genes, group.by = group_by_col)
+      Seurat::DotPlot(seurat_obj,
+                      features = genes,
+                      group.by = group_by_col,
+                      cols     = c("blue", "red"))
     }
 
     dp +
@@ -669,6 +672,7 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
                        ")"),
         x = "Features", y = group_by_col
       ) +
+      ggplot2::guides(colour = ggplot2::guide_colorbar(title = "Avg Expression")) +  # explicit legend
       ggplot2::theme(
         plot.title  = ggplot2::element_text(hjust = 0.5, face = "bold"),
         axis.text.y = ggplot2::element_text(size = label_style$size * 2.2)
@@ -676,9 +680,10 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
   }, label = paste0("DotPlot (", signature_name, ")"))
 
   if (!is.null(p_dot)) {
+    # wider to accommodate legend
     save_png(p_dot,
       file.path(out_dir, paste0(file_tag, "_DotPlot.png")),
-      width  = max(6, length(genes) * 0.7 + 3),
+      width  = max(10, length(genes) * 0.7 + 4),
       height = max(3, n_combo * 0.35 + 2))
   }
 
@@ -752,5 +757,239 @@ generate_cluster_zscore_heatmap <- function(seurat_obj, group_by_col, out_dir, p
     file.path(out_dir, paste0("ZScore_TopGenes_", prefix, "_", group_by_col, ".png")),
     width = calc_width, height = calc_height)
     
+  invisible(NULL)
+}
+
+# =============================================================================
+# NEW FUNCTION: Z-scored heatmap split by condition
+# =============================================================================
+
+#' Generate Z-scored Heatmap Split by Condition
+#'
+#' For each cluster (or label), compute average expression separately for each
+#' condition and produce a heatmap where columns are cluster_condition
+#' combinations and rows are genes, with row z-scores.
+#'
+#' @param seurat_obj Seurat object
+#' @param group_by_col Character. Metadata column for clusters (e.g. "seurat_clusters")
+#' @param condition_col Character. Metadata column for condition (default "condition")
+#' @param out_dir Character. Output directory
+#' @param prefix Character. Prefix for file names
+#' @param species_target Character. "Mouse" or "Human" to filter junk genes
+#' @param top_n Integer. Number of top genes to select per cluster_condition
+#' @return NULL
+#' @export
+generate_cluster_zscore_heatmap_split_condition <- function(seurat_obj,
+                                                            group_by_col,
+                                                            condition_col = "condition",
+                                                            out_dir,
+                                                            prefix,
+                                                            species_target = "Mouse",
+                                                            top_n = 10L) {
+
+  if (!requireNamespace("pheatmap", quietly = TRUE)) {
+    message("   [SKIP Z-Score Heatmap (split by condition)] pheatmap not installed")
+    return(invisible(NULL))
+  }
+
+  # Check columns
+  if (!group_by_col %in% colnames(seurat_obj@meta.data)) {
+    message("   [SKIP] '", group_by_col, "' not in metadata")
+    return(invisible(NULL))
+  }
+  if (!condition_col %in% colnames(seurat_obj@meta.data)) {
+    message("   [SKIP] '", condition_col, "' not in metadata")
+    return(invisible(NULL))
+  }
+
+  # Create combined group_condition identity
+  seurat_obj$group_condition <- paste(
+    seurat_obj@meta.data[[group_by_col]],
+    seurat_obj@meta.data[[condition_col]],
+    sep = " | "
+  )
+
+  # Only keep combinations that have at least 3 cells (optional)
+  valid_groups <- get_valid_groups(seurat_obj@meta.data, "group_condition", min_cells = 3L)
+  if (length(valid_groups) < 2L) {
+    message("   [SKIP Z-Score Heatmap (split)] fewer than 2 valid cluster×condition groups")
+    return(invisible(NULL))
+  }
+
+  Seurat::Idents(seurat_obj) <- "group_condition"
+  avg <- get_avg_expr(seurat_obj, layer = "data")
+  if (is.null(avg) || nrow(avg) == 0L) return(invisible(NULL))
+
+  # Filter junk genes
+  junk_pat <- get_junk_pattern(species_target)
+  avg_filt <- avg[!grepl(junk_pat, rownames(avg)), , drop = FALSE]
+  if (nrow(avg_filt) < 2L) return(invisible(NULL))
+
+  # Select top genes per combined group
+  top_genes <- unique(unlist(lapply(seq_len(ncol(avg_filt)), function(i) {
+    n <- min(top_n, nrow(avg_filt))
+    names(sort(avg_filt[, i], decreasing = TRUE)[seq_len(n)])
+  })))
+  if (length(top_genes) < 2L) return(invisible(NULL))
+
+  # Build heatmap matrix (rows = genes, columns = group_condition)
+  mat <- as.matrix(avg_filt[top_genes, , drop = FALSE])
+
+  # Row z-score
+  mat_scaled <- t(scale(t(mat)))
+
+  # Define colour breaks
+  breaks_list <- seq(-2, 2, by = 0.04)
+  color_pal   <- grDevices::colorRampPalette(c("blue", "white", "red"))(length(breaks_list))
+
+  ph <- safe_run(
+    pheatmap::pheatmap(
+      mat_scaled,
+      scale         = "none",          # already scaled
+      cluster_cols  = TRUE,
+      cluster_rows  = TRUE,
+      show_rownames = TRUE,
+      fontsize_row  = max(5, 12 - length(top_genes) / 15),
+      main          = paste0("Top ", top_n, " Genes (Z-Scored) | ", prefix, " | ",
+                             group_by_col, " × ", condition_col),
+      color         = color_pal,
+      breaks        = breaks_list,
+      silent        = TRUE
+    ),
+    label = "pheatmap z-score (split by condition)"
+  )
+
+  if (is.null(ph)) return(invisible(NULL))
+
+  make_dir(out_dir)
+
+  calc_height <- max(6, length(top_genes) * 0.15)
+  calc_width  <- max(6, length(valid_groups) * 0.5 + 2)
+
+  save_png(ph$gtable,
+    file.path(out_dir,
+              paste0("ZScore_TopGenes_", prefix, "_", group_by_col,
+                     "_by_", condition_col, ".png")),
+    width = calc_width, height = calc_height)
+
+  invisible(NULL)
+}
+
+# =============================================================================
+# NEW FUNCTION: Per-group DotPlots for a gene signature
+# =============================================================================
+
+#' Generate per-group DotPlots for a gene signature
+#'
+#' For each group in `group_by_col`, subset the cells and produce a Seurat
+#' DotPlot showing expression of the signature genes, split by condition.
+#' One PNG file is saved per group.
+#'
+#' @param seurat_obj Seurat object
+#' @param genes Character vector. Signature genes.
+#' @param out_dir Character. Output directory.
+#' @param prefix Character. Prefix for file names.
+#' @param group_by_col Character. Metadata column defining groups (clusters, labels).
+#' @param signature_name Character. Name of the signature (used in titles/filenames).
+#' @param condition_col Character. Metadata column for condition (e.g., "condition").
+#' @param min_cells_per_group Integer. Minimum number of cells in a group to plot.
+#' @param dot_colors Character vector of two colours for condition split (optional).
+#' @return NULL, invisibly.
+#' @export
+generate_gene_signature_per_group_dotplots <- function(seurat_obj,
+                                                       genes,
+                                                       out_dir,
+                                                       prefix,
+                                                       group_by_col,
+                                                       signature_name,
+                                                       condition_col = "condition",
+                                                       min_cells_per_group = 10L,
+                                                       dot_colors = NULL) {
+
+  genes <- .filter_present_genes(genes, seurat_obj,
+                                 paste0("Per-group DotPlot for '", signature_name, "'"))
+  if (is.null(genes) || length(genes) < 1L) {
+    message("   [SKIP] No valid genes for signature '", signature_name,
+            "' per-group dot plots.")
+    return(invisible(NULL))
+  }
+
+  # Check columns
+  if (!group_by_col %in% colnames(seurat_obj@meta.data)) {
+    message("   [SKIP Per-group DotPlot] '", group_by_col, "' not in metadata")
+    return(invisible(NULL))
+  }
+  if (!condition_col %in% colnames(seurat_obj@meta.data)) {
+    message("   [SKIP Per-group DotPlot] '", condition_col, "' not in metadata")
+    return(invisible(NULL))
+  }
+
+  # Get groups with enough cells (global, but we'll subset later)
+  all_groups <- as.character(unique(seurat_obj@meta.data[[group_by_col]]))
+  all_groups <- all_groups[!is.na(all_groups) & all_groups != "Unassigned"]  # optional filter
+
+  make_dir(out_dir)
+
+  # Determine dot colours if not provided
+  if (is.null(dot_colors)) {
+    n_cond <- length(unique(seurat_obj@meta.data[[condition_col]]))
+    dot_colors <- scales::hue_pal()(n_cond)
+  }
+
+  for (grp in all_groups) {
+    # Subset cells for this group
+    cells_keep <- rownames(seurat_obj@meta.data)[seurat_obj@meta.data[[group_by_col]] == grp]
+    if (length(cells_keep) < min_cells_per_group) {
+      message("   [SKIP] Group '", grp, "' has only ", length(cells_keep),
+              " cells (min = ", min_cells_per_group, ")")
+      next
+    }
+
+    # Create temporary object with only these cells
+    sub_obj <- tryCatch(
+      subset(seurat_obj, cells = cells_keep),
+      error = function(e) NULL
+    )
+    if (is.null(sub_obj) || ncol(sub_obj) == 0L) next
+
+    # Check that both conditions are present in this subset (optional, but we can still plot)
+    conds_present <- unique(sub_obj@meta.data[[condition_col]])
+    if (length(conds_present) < 2L) {
+      message("   [SKIP] Group '", grp, "' has only one condition (",
+              paste(conds_present, collapse = ", "), ") – skipping dot plot.")
+      next
+    }
+
+    # Create DotPlot – red-blue gradient, explicit legend title
+    p <- tryCatch({
+      Seurat::DotPlot(sub_obj,
+                      features = genes,
+                      group.by = condition_col,    # conditions on y-axis
+                      cols     = c("blue", "red")) +   # low=blue, high=red
+        Seurat::RotatedAxis() +
+        ggplot2::labs(
+          title = paste0(prefix, " | ", signature_name, " in ", grp,
+                         " (", paste(conds_present, collapse = " vs "), ")"),
+          x = "Genes",
+          y = condition_col
+        ) +
+        ggplot2::guides(colour = ggplot2::guide_colorbar(title = "Avg Expression")) +
+        ggplot2::theme(
+          plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
+          axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
+        )
+    }, error = function(e) NULL)
+
+    if (!is.null(p)) {
+      safe_grp <- .safe_filename(grp)
+      filename <- file.path(out_dir,
+                            paste0(prefix, "_", group_by_col, "_",
+                                   signature_name, "_", safe_grp, "_DotPlot.png"))
+      save_png(p, filename,
+               width = max(8, length(genes) * 0.6 + 3),
+               height = max(4, 1 + length(conds_present) * 0.5))
+    }
+  }
+
   invisible(NULL)
 }
