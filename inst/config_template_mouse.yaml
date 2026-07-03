@@ -156,7 +156,6 @@ genes:
   corr_genes_y:
     - "Ccl19"
     - "Cxcl13"
-    - "Cr2"
     - "Mfge8"
 
 # ── Gene Signature Panels ───────────────────────────────────────────────────

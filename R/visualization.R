@@ -522,12 +522,6 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
     return(invisible(NULL))
   }
 
-  # ── Decide whether condition should be nested inside each group ────────────
-  # Skipped when condition_col IS the grouping column (nesting a variable
-  # against itself), when it's absent, or when it has < 2 levels — and always
-  # skipped for values that already encode a WT-vs-KO comparison internally
-  # (e.g. a fold-change/ratio metric), since re-splitting those by condition
-  # would not make sense.
   has_condition <- !identical(condition_col, group_by_col) &&
     condition_col %in% colnames(seurat_obj@meta.data) &&
     length(unique(as.character(stats::na.omit(seurat_obj@meta.data[[condition_col]])))) > 1L
@@ -549,7 +543,7 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
   file_tag <- paste0(prefix, "_", group_by_col, "_", .safe_filename(signature_name))
   label_style <- .heatmap_label_params(n_combo)
 
-  # ── 1. Per-cell z-score heatmap (DoHeatmap) ────────────────────────────────
+  # ---- Per-cell heatmap (unchanged, uses SCT) ----
   seurat_obj <- safe_run(
     Seurat::ScaleData(seurat_obj, features = genes, verbose = FALSE),
     label = paste0("ScaleData (", signature_name, ")"), fallback = seurat_obj
@@ -583,7 +577,7 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
       width = calc_width, height = max(6, length(genes) * 0.5 + 2))
   }
 
-  # ── 2. Aggregated (group-averaged) z-score heatmap ─────────────────────────
+  # ---- Aggregated heatmap (unchanged, uses SCT) ----
   agg_plot <- safe_run({
     mat <- Seurat::GetAssayData(seurat_obj, assay = Seurat::DefaultAssay(seurat_obj),
                                 layer = "scale.data")
@@ -645,22 +639,22 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
       width = calc_width, height = max(4, length(genes) * 0.4))
   }
 
-  # ── 3. DotPlot (average expression + percent expressed) ────────────────────
-  # Updated: red-blue gradient, explicit legend title "Avg Expression"
+  # ---- DotPlot – NOW USING RNA ASSAY ----
   p_dot <- safe_run({
     dp <- if (has_condition) {
-      # condition split -> use red-blue gradient for expression
       Seurat::DotPlot(
         seurat_obj,
         features = genes,
         group.by = group_by_col,
         split.by = condition_col,
-        cols     = c("blue", "red")   # low = blue, high = red
+        assay    = "RNA",          # <-- explicitly use RNA assay
+        cols     = c("blue", "red")
       )
     } else {
       Seurat::DotPlot(seurat_obj,
                       features = genes,
                       group.by = group_by_col,
+                      assay    = "RNA",   # <-- here too
                       cols     = c("blue", "red"))
     }
 
@@ -672,7 +666,7 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
                        ")"),
         x = "Features", y = group_by_col
       ) +
-      ggplot2::guides(colour = ggplot2::guide_colorbar(title = "Avg Expression")) +  # explicit legend
+      ggplot2::guides(colour = ggplot2::guide_colorbar(title = "Avg Expression")) +
       ggplot2::theme(
         plot.title  = ggplot2::element_text(hjust = 0.5, face = "bold"),
         axis.text.y = ggplot2::element_text(size = label_style$size * 2.2)
@@ -680,7 +674,6 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
   }, label = paste0("DotPlot (", signature_name, ")"))
 
   if (!is.null(p_dot)) {
-    # wider to accommodate legend
     save_png(p_dot,
       file.path(out_dir, paste0(file_tag, "_DotPlot.png")),
       width  = max(10, length(genes) * 0.7 + 4),
