@@ -639,46 +639,58 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
       width = calc_width, height = max(4, length(genes) * 0.4))
   }
 
-  # ---- DotPlot – NOW USING RNA ASSAY ----
-  p_dot <- safe_run({
-    dp <- if (has_condition) {
-      Seurat::DotPlot(
-        seurat_obj,
-        features = genes,
-        group.by = group_by_col,
-        split.by = condition_col,
-        assay    = "RNA",          # <-- explicitly use RNA assay
-        cols     = c("blue", "red")
-      )
-    } else {
-      Seurat::DotPlot(seurat_obj,
-                      features = genes,
-                      group.by = group_by_col,
-                      assay    = "RNA",   # <-- here too
-                      cols     = c("blue", "red"))
-    }
-
-    dp +
-      Seurat::RotatedAxis() +
-      ggplot2::labs(
-        title = paste0(prefix, " | ", signature_name, " (",
-                       group_by_col, if (has_condition) paste0(" x ", condition_col) else "",
-                       ")"),
-        x = "Features", y = group_by_col
-      ) +
-      ggplot2::guides(colour = ggplot2::guide_colorbar(title = "Avg Expression")) +
-      ggplot2::theme(
-        plot.title  = ggplot2::element_text(hjust = 0.5, face = "bold"),
-        axis.text.y = ggplot2::element_text(size = label_style$size * 2.2)
-      )
-  }, label = paste0("DotPlot (", signature_name, ")"))
-
-  if (!is.null(p_dot)) {
-    save_png(p_dot,
-      file.path(out_dir, paste0(file_tag, "_DotPlot.png")),
-      width  = max(10, length(genes) * 0.7 + 4),
-      height = max(3, n_combo * 0.35 + 2))
+# ---- DotPlot – RNA assay, scale = FALSE ----
+p_dot <- safe_run({
+  dp <- if (has_condition) {
+    Seurat::DotPlot(
+      seurat_obj,
+      features = genes,
+      group.by = group_by_col,
+      split.by = condition_col,
+      assay    = "RNA",
+      cols     = c("blue", "red"),
+      scale    = FALSE
+    )
+  } else {
+    Seurat::DotPlot(seurat_obj,
+                    features = genes,
+                    group.by = group_by_col,
+                    assay    = "RNA",
+                    cols     = c("blue", "red"),
+                    scale    = FALSE)
   }
+
+  dp <- dp +
+    Seurat::RotatedAxis() +
+    ggplot2::labs(
+      title = paste0(prefix, " | ", signature_name, " (",
+                     group_by_col, if (has_condition) paste0(" x ", condition_col) else "",
+                     ")"),
+      x = "Features", y = group_by_col
+    ) +
+    # Force both legends to appear and set their titles
+    ggplot2::guides(
+      colour = ggplot2::guide_colorbar(title = "Avg Expression", 
+                                       barheight = unit(4, "cm")),
+      size   = ggplot2::guide_legend(title = "Percent Expressed")
+    ) +
+    ggplot2::theme(
+      plot.title  = ggplot2::element_text(hjust = 0.5, face = "bold"),
+      axis.text.y = ggplot2::element_text(size = label_style$size * 2.2),
+      # Ensure legend is placed on the right and not clipped
+      legend.position = "right",
+      legend.box = "vertical"
+    )
+  dp
+}, label = paste0("DotPlot (", signature_name, ")"))
+
+if (!is.null(p_dot)) {
+  # Increase width generously to accommodate the legend
+  save_png(p_dot,
+    file.path(out_dir, paste0(file_tag, "_DotPlot.png")),
+    width  = max(14, length(genes) * 0.7 + 8),  # extra space for legends
+    height = max(3, n_combo * 0.35 + 2))
+}
 
   invisible(NULL)
 }
@@ -953,12 +965,13 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
       next
     }
 
-    # Create DotPlot – red-blue gradient, explicit legend title
+    # Create DotPlot – red-blue gradient, explicit legend title, and scale = FALSE
     p <- tryCatch({
       Seurat::DotPlot(sub_obj,
                       features = genes,
                       group.by = condition_col,    # conditions on y-axis
-                      cols     = c("blue", "red")) +   # low=blue, high=red
+                      cols     = c("blue", "red"),
+                      scale    = FALSE) +          # <-- prevents centering (no negative averages)
         Seurat::RotatedAxis() +
         ggplot2::labs(
           title = paste0(prefix, " | ", signature_name, " in ", grp,
@@ -966,6 +979,7 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
           x = "Genes",
           y = condition_col
         ) +
+        # Explicitly add legend for average expression
         ggplot2::guides(colour = ggplot2::guide_colorbar(title = "Avg Expression")) +
         ggplot2::theme(
           plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
@@ -978,10 +992,148 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
       filename <- file.path(out_dir,
                             paste0(prefix, "_", group_by_col, "_",
                                    signature_name, "_", safe_grp, "_DotPlot.png"))
+      # Increase width to ensure legend is visible
       save_png(p, filename,
-               width = max(8, length(genes) * 0.6 + 3),
+               width = max(10, length(genes) * 0.6 + 5),
                height = max(4, 1 + length(conds_present) * 0.5))
     }
+  }
+
+  invisible(NULL)
+}
+
+#' Generate box plots for gene signatures (replaces barplot + SD)
+#'
+#' For each group in `group_by_col`, produce a box plot showing the
+#' distribution of expression (log-normalised counts) for each gene,
+#' split by condition. This gives a much richer view of the data than
+#' a bar plot + error bars, showing median, IQR, range, and outliers.
+#'
+#' @param seurat_obj Seurat object
+#' @param genes Character vector of signature genes
+#' @param out_dir Character. Output directory (e.g., group Heatmap folder)
+#' @param prefix Character. File-prefix (e.g., "Main" or subset name)
+#' @param group_by_col Character. Metadata column to group by (clusters, labels)
+#' @param signature_name Character. Signature name for titles/filenames
+#' @param condition_col Character. Metadata column holding the condition
+#' @param min_cells_per_group Integer. Minimum cells in a group to plot
+#' @param add_jitter Logical. If TRUE, overlay individual points (jittered).
+#' @return NULL, invisibly
+#' @export
+generate_gene_signature_boxplots <- function(seurat_obj,
+                                             genes,
+                                             out_dir,
+                                             prefix,
+                                             group_by_col,
+                                             signature_name,
+                                             condition_col = "condition",
+                                             min_cells_per_group = 10L,
+                                             add_jitter = TRUE) {
+
+  genes <- .filter_present_genes(genes, seurat_obj,
+                                 paste0("Boxplot for '", signature_name, "'"))
+  if (is.null(genes) || length(genes) < 1L) {
+    message("   [SKIP] No valid genes for signature '", signature_name,
+            "' box plots.")
+    return(invisible(NULL))
+  }
+
+  # Check required columns
+  if (!group_by_col %in% colnames(seurat_obj@meta.data)) {
+    message("   [SKIP Boxplot] '", group_by_col, "' not in metadata")
+    return(invisible(NULL))
+  }
+  if (!condition_col %in% colnames(seurat_obj@meta.data)) {
+    message("   [SKIP Boxplot] '", condition_col, "' not in metadata")
+    return(invisible(NULL))
+  }
+
+  # Ensure RNA assay has log-normalised data
+  Seurat::DefaultAssay(seurat_obj) <- "RNA"
+  available_layers <- tryCatch(
+    SeuratObject::Layers(seurat_obj[["RNA"]]),
+    error = function(e) character(0)
+  )
+  if (!"data" %in% available_layers && "counts" %in% available_layers) {
+    seurat_obj <- Seurat::NormalizeData(seurat_obj, assay = "RNA", verbose = FALSE)
+  }
+  expr <- Seurat::GetAssayData(seurat_obj, assay = "RNA", layer = "data")
+
+  # Get groups with enough cells
+  all_groups <- as.character(unique(seurat_obj@meta.data[[group_by_col]]))
+  all_groups <- all_groups[!is.na(all_groups) & all_groups != "Unassigned"]
+
+  make_dir(out_dir)
+
+  for (grp in all_groups) {
+    # Subset cells for this group
+    cells_keep <- rownames(seurat_obj@meta.data)[seurat_obj@meta.data[[group_by_col]] == grp]
+    if (length(cells_keep) < min_cells_per_group) {
+      message("   [SKIP Boxplot] Group '", grp, "' has only ", length(cells_keep),
+              " cells (min = ", min_cells_per_group, ")")
+      next
+    }
+
+    # Extract expression matrix for these cells (genes x cells)
+    mat <- as.matrix(expr[genes, cells_keep, drop = FALSE])
+
+    # Prepare condition vector
+    cond_vec <- seurat_obj@meta.data[cells_keep, condition_col]
+    cond_levels <- sort(unique(cond_vec))
+    if (length(cond_levels) < 2L) {
+      message("   [SKIP Boxplot] Group '", grp, "' has only one condition")
+      next
+    }
+
+    # Reshape to long format: Gene, Condition, Expression
+    df_long <- data.frame(
+      Gene = rep(rownames(mat), ncol(mat)),
+      Condition = rep(cond_vec, each = nrow(mat)),
+      Expression = as.vector(mat)
+    )
+    df_long$Condition <- factor(df_long$Condition, levels = cond_levels)
+
+    # Create box plot
+    p <- ggplot2::ggplot(df_long,
+           ggplot2::aes(x = Gene, y = Expression, fill = Condition)) +
+      ggplot2::geom_boxplot(
+        position = ggplot2::position_dodge(0.8),
+        outlier.size = 0.5,
+        outlier.alpha = 0.5
+      ) +
+      ggplot2::scale_fill_manual(values = scales::hue_pal()(length(cond_levels))) +
+      ggplot2::labs(
+        title = paste0(prefix, " | ", signature_name, " in ", grp,
+                       " (", paste(cond_levels, collapse = " vs "), ")"),
+        x = "Genes",
+        y = "Expression (log-normalised)"
+      ) +
+      ggplot2::theme_minimal() +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
+        axis.text.x = ggplot2::element_text(angle = 45, hjust = 1),
+        legend.position = "right"
+      )
+
+    # Optionally add jittered points
+    if (add_jitter) {
+      p <- p + ggplot2::geom_jitter(
+        ggplot2::aes(color = Condition),
+        position = ggplot2::position_dodge(0.8),
+        size = 0.4,
+        alpha = 0.3,
+        show.legend = FALSE
+      )
+    }
+
+    # Save
+    safe_grp <- .safe_filename(grp)
+    filename <- file.path(out_dir,
+                          paste0(prefix, "_", group_by_col, "_",
+                                 signature_name, "_", safe_grp, "_Boxplot.png"))
+    save_png(p, filename,
+             width = max(8, length(genes) * 0.6 + 3),
+             height = 5)
   }
 
   invisible(NULL)

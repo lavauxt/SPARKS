@@ -262,11 +262,6 @@ generate_qc_report <- function(seurat_obj, comp_group, out_dir,
 
   if (is.null(title)) title <- paste("QC Report -", comp_group)
 
-  # BUG FIX #9: the original code had an unconditional stop() inside the
-  # "template not found" branch, which prevented any report from ever being
-  # generated.  We now emit a warning and return invisibly so the pipeline
-  # continues.  The caller (main.R) already validates the template path before
-  # reaching this function, so this branch is only a safety net.
   if (is.null(rmd_template) || !file.exists(rmd_template)) {
     message("   [WARNING] generate_qc_report: template not found at '",
             rmd_template %||% "<NULL>", "'. Skipping HTML report.")
@@ -274,14 +269,6 @@ generate_qc_report <- function(seurat_obj, comp_group, out_dir,
   }
 
   make_dir(out_dir)
-
-  # BUG FIX #12: rmarkdown::render() changes the working directory to the
-  # location of the input Rmd during knitting.  If output_file is a *relative*
-  # path it is therefore resolved against the Rmd's directory, not the caller's
-  # working directory — so the HTML ended up in the package/inst folder instead
-  # of the QC output folder.  normalizePath(..., mustWork = FALSE) converts the
-  # path to an absolute one before render() is called, guaranteeing the file
-  # always lands in out_dir regardless of where the Rmd lives.
   output_file <- normalizePath(
     file.path(out_dir, paste0("QC_report_", comp_group, ".html")),
     mustWork = FALSE

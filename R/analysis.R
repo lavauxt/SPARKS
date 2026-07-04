@@ -237,8 +237,6 @@ save_pseudobulk_counts <- function(seurat_obj, output_dir, file_prefix,
                                        seurat_obj@meta.data[[sample_col]], sep = "_")
   Seurat::Idents(seurat_obj) <- "pseudobulk_group"
 
-  # BUG FIX #11 (companion): specify layer = "counts" explicitly so Seurat v5
-  # does not fall back to a "data" layer search and emit the noisy warning.
   agg <- safe_run({
     Seurat::AggregateExpression(seurat_obj, assays = "RNA",
                                 layer = "counts", return.seurat = FALSE)[["RNA"]]
@@ -421,13 +419,6 @@ run_gene_correlations <- function(seurat_obj,
   conditions <- unique(as.character(seurat_obj@meta.data[[cond_col]]))
   conditions <- conditions[!is.na(conditions)]
 
-  # BUG FIX #11: After SCTransform, Seurat v5 may drop the RNA "data" layer to
-  # save memory, leaving only "counts".  Calling GetAssayData(layer = "data") in
-  # that state triggers:
-  #   Warning: Default search for "data" layer in "RNA" assay yielded no results;
-  #            utilizing "counts" layer instead.
-  # Fix: inspect available layers first.  If "data" is absent but "counts" is
-  # present, re-run NormalizeData to recreate it cleanly — no suppressWarnings().
   available_layers <- tryCatch(
     SeuratObject::Layers(seurat_obj[[assay]]),
     error = function(e) character(0)

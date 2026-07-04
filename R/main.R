@@ -78,17 +78,11 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     cond_vec    <- as.character(merged_obj@meta.data[[cond_col]])
     cond_levels <- unique(as.character(group_meta$protocol))
     merged_obj[[cond_col]] <- factor(cond_vec, levels = cond_levels)
-    # Keep orig.ident as per-sample IDs so Harmony corrects across individual
-    # samples, not just conditions.  'sample' is a convenience condition alias.
+
     merged_obj$sample <- factor(cond_vec, levels = cond_levels)
     save_cell_counts(merged_obj, paste0("before_SCT_", comp_group), dirs$qc)
 
-    # BUG FIX #5: ensure RNA assay has log-normalised data exactly once.
-    # The original code had a conditional NormalizeData guard here AND an
-    # unconditional NormalizeData call inside the sex/cell-cycle block,
-    # causing a redundant double normalisation whenever sex or cell-cycle
-    # scoring was enabled.  Run it once unconditionally here; the block below
-    # no longer repeats it.
+
     message("   [INFO] Running NormalizeData on RNA assay...")
     merged_obj <- Seurat::NormalizeData(merged_obj, assay = "RNA", verbose = FALSE)
 
@@ -118,9 +112,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
         s.genes   <- Seurat::cc.genes.updated.2019$s.genes
         g2m.genes <- Seurat::cc.genes.updated.2019$g2m.genes
 
-        # BUG FIX #6: original code compared species_target to lowercase
-        # "mouse" but the YAML stores "Mouse" (capital M), so this branch was
-        # never entered and mouse cell-cycle genes were never title-cased.
         if (tolower(cfg$pipeline$species_target) == "mouse") {
           s.genes   <- stringr::str_to_title(tolower(s.genes))
           g2m.genes <- stringr::str_to_title(tolower(g2m.genes))
@@ -181,18 +172,10 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     }
 
     # ── QC HTML Report ─────────────────────────────────────────────────────────
-    # BUG FIX #7: template lookup was using a fragile relative path
-    # (results_dir/../templates/qc_report.Rmd) that is almost never correct.
-    # Now we search in the config file's own directory first, then in getwd(),
-    # then honour an explicit cfg$report$rmd_template override.
+
     if (requireNamespace("rmarkdown", quietly = TRUE)) {
       template_path <- cfg$report$rmd_template %||% {
-        # BUG FIX #14: when SPARKS is installed via devtools::install_github()
-        # (as documented in the README), qc_report.Rmd is NOT sitting next to
-        # the user's config YAML or in getwd() unless they manually copy it —
-        # this is why the report silently never generated. The template now
-        # ships inside inst/rmd/ and is located via system.file() as the
-        # final fallback, so it always resolves for an installed package.
+
         candidates <- c(
           file.path(cfg$pipeline$config_dir, "qc_report.Rmd"),
           file.path(getwd(),                 "qc_report.Rmd"),
@@ -256,8 +239,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     # ── Interactive Results HTML Report ────────────────────────────────────────
     if (requireNamespace("rmarkdown", quietly = TRUE)) {
       results_template_path <- cfg$report$results_rmd_template %||% {
-        # BUG FIX #14 (see qc_report.Rmd lookup above): same system.file()
-        # fallback so the results report is found for an installed package.
+
         candidates <- c(
           file.path(cfg$pipeline$config_dir, "results_report.Rmd"),
           file.path(getwd(),                 "results_report.Rmd"),
@@ -493,7 +475,6 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     )
   }
 
-  # NEW: Per-group DotPlots for each gene signature
   for (sig in cfg$gene_signatures) {
     safe_run(
       generate_gene_signature_per_group_dotplots(
@@ -508,7 +489,23 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
       ),
       label = paste0("Per-group DotPlot '", sig$name, "': ", file_prefix, " | ", group_col)
     )
-  }
+  
+
+      safe_run(
+          generate_gene_signature_boxplots(
+            seurat_obj          = seurat_obj,
+            genes               = sig$genes,
+            out_dir             = dirs$Heatmap,
+            prefix              = file_prefix,
+            group_by_col        = group_col,
+            signature_name      = sig$name,
+            condition_col       = cfg$processing$condition_col,
+            min_cells_per_group = cfg$labeling$min_subset_cells %||% 10L,
+            add_jitter          = TRUE   # set to FALSE if you want only boxes
+          ),
+          label = paste0("Boxplot '", sig$name, "': ", file_prefix, " | ", group_col)
+        )
+      }
 
   # ── Escape Enrichment Plots ─────────────────────────────────────────────────
   if (isTRUE(cfg$escape$run)) {
@@ -558,13 +555,6 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   sub_obj <- subset(main_obj, cells = colnames(main_obj)[idx])
   Seurat::DefaultAssay(sub_obj) <- "RNA"
   sub_obj <- SeuratObject::JoinLayers(sub_obj)
-
-  # BUG FIX #13: JoinLayers restores "counts" from per-sample layers but does
-  # NOT guarantee that the "data" (log-normalised) layer is present in the
-  # subset — SCTransform may have dropped it from the parent object to save
-  # memory.  run_seurat_processing() will create a fresh SCT assay, but the
-  # RNA "data" layer is still needed by run_gene_correlations() afterwards.
-  # Re-running NormalizeData here is cheap and ensures it is always available.
   available_subset_layers <- tryCatch(
     SeuratObject::Layers(sub_obj[["RNA"]]),
     error = function(e) character(0)
@@ -573,12 +563,6 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     message("   [INFO] RNA 'data' layer absent in subset; running NormalizeData.")
     sub_obj <- Seurat::NormalizeData(sub_obj, assay = "RNA", verbose = FALSE)
   }
-
-  # BUG FIX #8: the YAML defines per-subset dimensions as pca_dims_from /
-  # pca_dims_to (same convention as the top-level processing block), but the
-  # original code passed subset_cfg$pca_dims which is always NULL after YAML
-  # parsing.  The function therefore always fell back to the default 1:20,
-  # ignoring the user-specified subset dimensions entirely.
   pca_dims_sub <- if (!is.null(subset_cfg$pca_dims_from) &&
                        !is.null(subset_cfg$pca_dims_to)) {
     seq.int(subset_cfg$pca_dims_from, subset_cfg$pca_dims_to)

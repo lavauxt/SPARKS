@@ -15,13 +15,11 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
     cfg <- utils::modifyList(cfg, override_cfg)
   }
 
-  # BUG FIX #1: store the directory of the config file so downstream code
-  # (e.g. QC report template lookup) can find sibling files reliably.
+
   cfg$pipeline$config_dir <- dirname(normalizePath(base_config_path))
 
   # ── Required top-level keys ────────────────────────────────────────────────
-  # BUG FIX #2: removed "genes" from required — the human template has it
-  # commented-out by design; defaults below handle the missing key gracefully.
+
   required <- c("pipeline", "qc", "processing", "deg", "plot",
                 "species", "singler", "groupings_main")
   missing  <- setdiff(required, names(cfg))
@@ -38,11 +36,7 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$processing$sct_assay          <- cfg$processing$sct_assay          %||% "SCT"
   cfg$processing$vars_to_regress    <- cfg$processing$vars_to_regress    %||% "percent.mt"
 
-  # BUG FIX #3: derive pca_dims as an integer sequence from pca_dims_from /
-  # pca_dims_to (the fields actually used in both YAML templates) before
-  # falling back to the hardcoded default.  Previously pca_dims was always
-  # NULL after YAML load, so the %||% silently overrode whatever the user set
-  # in the YAML.
+
   if (is.null(cfg$processing$pca_dims)) {
     from <- cfg$processing$pca_dims_from %||% 1L
     to   <- cfg$processing$pca_dims_to   %||% 20L
@@ -120,11 +114,6 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$labeling$marker_positive_threshold <- cfg$labeling$marker_positive_threshold %||% 0.1
   cfg$subsets            <- cfg$subsets            %||% list()
 
-  # BUG FIX #4: guard against cfg$genes being NULL (human template has the
-  # genes block commented out).  NULL$x <- value silently fails in R, leaving
-  # cfg$genes as NULL and making every downstream cfg$genes$* access return
-  # NULL without any error — which is fine — but the required-keys check
-  # above was also failing.  Initialise the list if absent, then set fields.
   if (is.null(cfg$genes)) cfg$genes <- list()
   cfg$genes$genes_to_plot <- cfg$genes$genes_to_plot %||% NULL
   cfg$genes$corr_genes_x  <- cfg$genes$corr_genes_x  %||% NULL
