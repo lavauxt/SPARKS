@@ -167,28 +167,20 @@ genes:
 #   - <name>_DotPlot.png            (avg expression + pct expressed, DotPlot)
 # Output path: results_dir/<comparison_group>/<Main|SubsetName>/<group_col>/Heatmap/
 gene_signatures:
-  - name:  "Vascular_Tightness"
+  - name:  "Vascular_Tightness & Lipid_Scavenger"
     genes:
       - "Cdh5"
       - "Cldn5"
+      - "Tjp1"
       - "Pdgfa"
       - "Pdgfb"
-      - "Tek"
-      - "Tjp1"
-      - "Wnt2"
-      - "Emcn"
-  - name:  "Lipid_Scavenger"
-    genes:
       - "Cd36"
       - "Ackr3"
       - "Ackr4"
-      - "Plpp3"
       - "Stab1"
-      - "Stab2"
       - "Cav1"
       - "Cav2"
-      - "Dab2"
-
+      - "Plpp3"
 # ── Main groupings (null = auto: cluster_col + all singler label names) ─────────
 groupings_main: ~
 
