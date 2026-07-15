@@ -459,8 +459,8 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   generate_top_expressed_genes(seurat_obj, group_col, dirs$Heatmap, file_prefix)
 
   # ── Gene Signature Panels (heatmap + dotplot) ───────────────────────────────
-  # Combined plots (all groups together)
   for (sig in cfg$gene_signatures) {
+    scale_dot <- sig$dot_scale %||% FALSE
     safe_run(
       generate_gene_signature_plots(
         seurat_obj     = seurat_obj,
@@ -469,13 +469,15 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
         prefix         = file_prefix,
         group_by_col   = group_col,
         signature_name = sig$name,
-        condition_col  = cfg$processing$condition_col
+        condition_col  = cfg$processing$condition_col,
+        scale_dotplot  = scale_dot          
       ),
       label = paste0("Gene Signature '", sig$name, "': ", file_prefix, " | ", group_col)
     )
   }
 
   for (sig in cfg$gene_signatures) {
+    scale_dot <- sig$dot_scale %||% FALSE  
     safe_run(
       generate_gene_signature_per_group_dotplots(
         seurat_obj          = seurat_obj,
@@ -485,11 +487,11 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
         group_by_col        = group_col,
         signature_name      = sig$name,
         condition_col       = cfg$processing$condition_col,
-        min_cells_per_group = cfg$labeling$min_subset_cells %||% 10L
+        min_cells_per_group = cfg$labeling$min_subset_cells %||% 10L,
+        scale_dotplot       = scale_dot         
       ),
       label = paste0("Per-group DotPlot '", sig$name, "': ", file_prefix, " | ", group_col)
     )
-  
 
       safe_run(
           generate_gene_signature_boxplots(

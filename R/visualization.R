@@ -490,11 +490,16 @@ generate_subcluster_heatmaps <- function(seurat_obj, genes, out_dir, prefix) {
 #' @param signature_name Character. Name of the gene signature (used in filenames/titles)
 #' @param condition_col Character. Metadata column holding the WT/KO-style condition,
 #'   nested inside each group. Default "condition".
+#' @param scale_dotplot Logical. If TRUE, the DotPlot uses row-scaled expression
+#'   (z-score across groups) with colour scale centred at 0; if FALSE (default),
+#'   raw average expression is shown. This corresponds to Seurat's `scale`
+#'   argument in DotPlot.
 #' @return NULL
 #' @export
 generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
                                           group_by_col, signature_name,
-                                          condition_col = "condition") {
+                                          condition_col = "condition",
+                                          scale_dotplot = FALSE) {   
 
   genes <- .filter_present_genes(genes, seurat_obj,
                                   paste0("Gene Signature '", signature_name, "'"))
@@ -639,61 +644,62 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
       width = calc_width, height = max(4, length(genes) * 0.4))
   }
 
-# ---- DotPlot – RNA assay, scale = FALSE ----
-p_dot <- safe_run({
-  dp <- if (has_condition) {
-    Seurat::DotPlot(
-      seurat_obj,
-      features = genes,
-      group.by = group_by_col,
-      split.by = condition_col,
-      assay    = "RNA",
-      cols     = c("blue", "red"),
-      scale    = FALSE
-    )
-  } else {
-    Seurat::DotPlot(seurat_obj,
-                    features = genes,
-                    group.by = group_by_col,
-                    assay    = "RNA",
-                    cols     = c("blue", "red"),
-                    scale    = FALSE)
+  # ---- DotPlot – RNA assay, scale controlled by scale_dotplot ----
+  p_dot <- safe_run({
+    dp <- if (has_condition) {
+      Seurat::DotPlot(
+        seurat_obj,
+        features = genes,
+        group.by = group_by_col,
+        split.by = condition_col,
+        assay    = "RNA",
+        cols     = c("blue", "red"),
+        scale    = scale_dotplot         
+      )
+    } else {
+      Seurat::DotPlot(seurat_obj,
+                      features = genes,
+                      group.by = group_by_col,
+                      assay    = "RNA",
+                      cols     = c("blue", "red"),
+                      scale    = scale_dotplot)   
+    }
+
+    dp <- dp +
+      Seurat::RotatedAxis() +
+      ggplot2::labs(
+        title = paste0(prefix, " | ", signature_name, " (",
+                       group_by_col, if (has_condition) paste0(" x ", condition_col) else "",
+                       ")"),
+        x = "Features", y = group_by_col
+      ) +
+      # Force both legends to appear and set their titles
+      ggplot2::guides(
+        colour = ggplot2::guide_colorbar(title = "Avg Expression", 
+                                         barheight = unit(4, "cm")),
+        size   = ggplot2::guide_legend(title = "Percent Expressed")
+      ) +
+      ggplot2::theme(
+        plot.title  = ggplot2::element_text(hjust = 0.5, face = "bold"),
+        axis.text.y = ggplot2::element_text(size = label_style$size * 2.2),
+        # Ensure legend is placed on the right and not clipped
+        legend.position = "right",
+        legend.box = "vertical"
+      )
+    dp
+  }, label = paste0("DotPlot (", signature_name, ")"))
+
+  if (!is.null(p_dot)) {
+    # Increase width generously to accommodate the legend
+    save_png(p_dot,
+      file.path(out_dir, paste0(file_tag, "_DotPlot.png")),
+      width  = max(14, length(genes) * 0.7 + 8),  # extra space for legends
+      height = max(3, n_combo * 0.35 + 2))
   }
-
-  dp <- dp +
-    Seurat::RotatedAxis() +
-    ggplot2::labs(
-      title = paste0(prefix, " | ", signature_name, " (",
-                     group_by_col, if (has_condition) paste0(" x ", condition_col) else "",
-                     ")"),
-      x = "Features", y = group_by_col
-    ) +
-    # Force both legends to appear and set their titles
-    ggplot2::guides(
-      colour = ggplot2::guide_colorbar(title = "Avg Expression", 
-                                       barheight = unit(4, "cm")),
-      size   = ggplot2::guide_legend(title = "Percent Expressed")
-    ) +
-    ggplot2::theme(
-      plot.title  = ggplot2::element_text(hjust = 0.5, face = "bold"),
-      axis.text.y = ggplot2::element_text(size = label_style$size * 2.2),
-      # Ensure legend is placed on the right and not clipped
-      legend.position = "right",
-      legend.box = "vertical"
-    )
-  dp
-}, label = paste0("DotPlot (", signature_name, ")"))
-
-if (!is.null(p_dot)) {
-  # Increase width generously to accommodate the legend
-  save_png(p_dot,
-    file.path(out_dir, paste0(file_tag, "_DotPlot.png")),
-    width  = max(14, length(genes) * 0.7 + 8),  # extra space for legends
-    height = max(3, n_combo * 0.35 + 2))
-}
 
   invisible(NULL)
 }
+
 
 #' Generate Z-scored Heatmap of Top Expressed Genes per Cluster
 #'
@@ -764,10 +770,6 @@ generate_cluster_zscore_heatmap <- function(seurat_obj, group_by_col, out_dir, p
     
   invisible(NULL)
 }
-
-# =============================================================================
-# NEW FUNCTION: Z-scored heatmap split by condition
-# =============================================================================
 
 #' Generate Z-scored Heatmap Split by Condition
 #'
@@ -880,10 +882,6 @@ generate_cluster_zscore_heatmap_split_condition <- function(seurat_obj,
   invisible(NULL)
 }
 
-# =============================================================================
-# NEW FUNCTION: Per-group DotPlots for a gene signature
-# =============================================================================
-
 #' Generate per-group DotPlots for a gene signature
 #'
 #' For each group in `group_by_col`, subset the cells and produce a Seurat
@@ -899,6 +897,9 @@ generate_cluster_zscore_heatmap_split_condition <- function(seurat_obj,
 #' @param condition_col Character. Metadata column for condition (e.g., "condition").
 #' @param min_cells_per_group Integer. Minimum number of cells in a group to plot.
 #' @param dot_colors Character vector of two colours for condition split (optional).
+#' @param scale_dotplot Logical. If TRUE, the DotPlot uses row-scaled expression
+#'   (z-score across groups) with colour scale centred at 0; if FALSE (default),
+#'   raw average expression is shown.
 #' @return NULL, invisibly.
 #' @export
 generate_gene_signature_per_group_dotplots <- function(seurat_obj,
@@ -909,7 +910,8 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
                                                        signature_name,
                                                        condition_col = "condition",
                                                        min_cells_per_group = 10L,
-                                                       dot_colors = NULL) {
+                                                       dot_colors = NULL,
+                                                       scale_dotplot = FALSE) {   
 
   genes <- .filter_present_genes(genes, seurat_obj,
                                  paste0("Per-group DotPlot for '", signature_name, "'"))
@@ -965,13 +967,13 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
       next
     }
 
-    # Create DotPlot – red-blue gradient, explicit legend title, and scale = FALSE
+    # Create DotPlot – red-blue gradient, explicit legend title, and scale controlled by scale_dotplot
     p <- tryCatch({
       Seurat::DotPlot(sub_obj,
                       features = genes,
                       group.by = condition_col,    # conditions on y-axis
                       cols     = c("blue", "red"),
-                      scale    = FALSE) +          # <-- prevents centering (no negative averages)
+                      scale    = scale_dotplot) +  
         Seurat::RotatedAxis() +
         ggplot2::labs(
           title = paste0(prefix, " | ", signature_name, " in ", grp,

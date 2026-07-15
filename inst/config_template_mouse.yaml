@@ -168,6 +168,7 @@ genes:
 # Output path: results_dir/<comparison_group>/<Main|SubsetName>/<group_col>/Heatmap/
 gene_signatures:
   - name:  "Vascular_Tightness & Lipid_Scavenger"
+    dot_scale: true
     genes:
       - "Cdh5"
       - "Cldn5"
