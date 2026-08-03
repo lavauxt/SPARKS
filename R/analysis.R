@@ -435,7 +435,6 @@ run_gene_correlations <- function(seurat_obj,
   }
   expr <- Seurat::GetAssayData(seurat_obj, assay = assay, layer = "data")
 
-  # --- Report original and missing genes for set X ---
   message("   Gene set X (", length(genes_x), " genes provided):")
   present_x <- intersect(genes_x, rownames(expr))
   missing_x <- setdiff(genes_x, rownames(expr))
@@ -448,7 +447,6 @@ run_gene_correlations <- function(seurat_obj,
     message("      -> Missing (not in assay): ", paste(missing_x, collapse = ", "))
   }
 
-  # --- Report original and missing genes for set Y ---
   message("   Gene set Y (", length(genes_y), " genes provided):")
   present_y <- intersect(genes_y, rownames(expr))
   missing_y <- setdiff(genes_y, rownames(expr))
@@ -461,7 +459,6 @@ run_gene_correlations <- function(seurat_obj,
     message("      -> Missing (not in assay): ", paste(missing_y, collapse = ", "))
   }
 
-  # --- Use only present genes ---
   valid_genes_x <- present_x
   valid_genes_y <- present_y
 
@@ -470,7 +467,6 @@ run_gene_correlations <- function(seurat_obj,
     return(invisible(NULL))
   }
 
-  # ========== GLOBAL CORRELATION (all cells, ignoring groups) ==========
   if (global_plot) {
     message("   Computing global correlation across all cells...")
     all_cells <- colnames(expr)
@@ -483,12 +479,10 @@ run_gene_correlations <- function(seurat_obj,
     cor_global_df$Method <- method
     cor_global_df$Type <- "Global"
     
-    # Save global correlation table
     global_tsv <- file.path(corr_dir, paste0("Correlations_", method, "_", prefix, "_global.tsv"))
     write.table(cor_global_df, global_tsv, sep = "\t", quote = FALSE, row.names = FALSE)
     message("   -> Global correlation table saved: ", basename(global_tsv))
     
-    # Generate global heatmap
     tryCatch({
       p_global <- ggplot2::ggplot(cor_global_df, ggplot2::aes(x = Gene_Y, y = Gene_X, fill = Correlation)) +
         ggplot2::geom_tile(color = "darkgray", linewidth = 0.6) + 
@@ -535,7 +529,6 @@ run_gene_correlations <- function(seurat_obj,
     })
   }
 
-  # ========== PER-GROUP AND PER-CONDITION CORRELATIONS ==========
   all_cors <- list()
 
   for (grp in groups) {
@@ -563,7 +556,6 @@ run_gene_correlations <- function(seurat_obj,
         cor_df$Method <- method
         all_cors[[grp_cond_label]] <- cor_df
         
-        # Generate heatmap for this group/condition
         tryCatch({
           clean_label <- gsub("[^A-Za-z0-9]", "_", grp_cond_label)
           out_file <- file.path(corr_dir, paste0("Corr_", method, "_", prefix, "_", clean_label, ".png"))
@@ -614,7 +606,6 @@ run_gene_correlations <- function(seurat_obj,
     }
   }
 
-  # Combine all per-group correlation tables
   if (length(all_cors) > 0) {
     final_df <- do.call(rbind, all_cors)
     tsv_file <- file.path(corr_dir, paste0("Correlations_", method, "_", prefix, "_by_group.tsv"))

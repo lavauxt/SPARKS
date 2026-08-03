@@ -13,7 +13,8 @@ generate_gene_signature_per_group_dotplots(
   signature_name,
   condition_col = "condition",
   min_cells_per_group = 10L,
-  dot_colors = NULL
+  dot_colors = NULL,
+  scale_dotplot = FALSE
 )
 }
 \arguments{
@@ -34,6 +35,10 @@ generate_gene_signature_per_group_dotplots(
 \item{min_cells_per_group}{Integer. Minimum number of cells in a group to plot.}
 
 \item{dot_colors}{Character vector of two colours for condition split (optional).}
+
+\item{scale_dotplot}{Logical. If TRUE, the DotPlot uses row-scaled expression
+(z-score across groups) with colour scale centred at 0; if FALSE (default),
+raw average expression is shown.}
 }
 \value{
 NULL, invisibly.

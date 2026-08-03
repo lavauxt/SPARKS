@@ -1,5 +1,3 @@
-# ── General Utilities ─────────────────────────────────────────────────────────
-
 #' Null coalescing operator
 #' @name %||%
 #' @param lhs Left hand side
@@ -43,8 +41,6 @@ safe_run <- function(expr, label = "Task", fallback = NULL) {
   gsub("[^A-Za-z0-9_.-]", "_", x)
 }
 
-# ── File I/O Utilities ────────────────────────────────────────────────────────
-
 #' Save a plot to PNG using ggsave or base R for pheatmap/gtable
 #' @param p Plot object (ggplot or gtable)
 #' @param filename Character. Output file path
@@ -87,8 +83,6 @@ write_table <- function(x, file, sep = "\t", quote = FALSE, row_names = FALSE) {
 save_tsv <- function(x, file) {
   write_table(x, file, sep = "\t", quote = FALSE, row_names = FALSE)
 }
-
-# ── Seurat Data Extractors & Checks ───────────────────────────────────────────
 
 #' Get valid groups containing a minimum number of cells
 #' @param meta Data frame (Seurat metadata)
@@ -293,7 +287,6 @@ generate_qc_report <- function(seurat_obj, comp_group, out_dir,
   invisible(output_file)
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
 #' Generate an interactive HTML results report for a comparison group
 #'
 #' Renders \code{results_report.Rmd} into \code{out_dir} as

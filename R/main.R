@@ -1,4 +1,3 @@
-# ──────────────────────────────────────────────────────────────────────────────
 #' Run the complete scRNA-seq pipeline
 #' @param base_config_path Path to the template YAML
 #' @param override_config_path Path to your custom override YAML
@@ -40,7 +39,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     group_meta <- sample_metadata[sample_metadata$comparison_group == comp_group, ]
     dirs       <- .setup_group_dirs(cfg$pipeline$results_dir, comp_group)
 
-    # ── Per-sample processing ──────────────────────────────────────────────────
     protocol_objects <- lapply(seq_len(nrow(group_meta)), function(i) {
       safe_run(
         process_single_sample(
@@ -70,7 +68,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       next
     }
 
-    # ── Merge ──────────────────────────────────────────────────────────────────
     valid_idx  <- !sapply(protocol_objects, is.null)
     merged_obj <- .merge_samples(valid_objects,
                                  folder_ids = group_meta$folder_id[valid_idx])
@@ -86,13 +83,10 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     message("   [INFO] Running NormalizeData on RNA assay...")
     merged_obj <- Seurat::NormalizeData(merged_obj, assay = "RNA", verbose = FALSE)
 
-    # ── Regression variables ────────────────────────────────────────────────────
     regress_vars <- cfg$processing$vars_to_regress
 
-    # ── Sex & Cell Cycle scoring ───────────────────────────────────────────────
     if (cfg$sex_scoring$run || cfg$cell_cycle$run) {
 
-      # --- Sex Scoring ---
       if (cfg$sex_scoring$run) {
         merged_obj <- run_sex_scoring(
           seurat_obj   = merged_obj,
@@ -105,7 +99,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
         }
       }
 
-      # --- Cell Cycle Scoring ---
       if (cfg$cell_cycle$run) {
         message("   [INFO] Running Cell Cycle Scoring...")
 
@@ -131,7 +124,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       }
     }
 
-    # ── Seurat processing ──────────────────────────────────────────────────────
     merged_obj <- run_seurat_processing(
       seurat_obj      = merged_obj,
       dims_pca        = cfg$processing$pca_dims,
@@ -141,7 +133,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       split_by        = "orig.ident"
     )
 
-    # ── Elbow Plot ─────────────────────────────────────────────────────────────
     save_png(
       Seurat::ElbowPlot(merged_obj,
         ndims = min(cfg$processing$n_elbow_dims, ncol(merged_obj) - 1L)),
@@ -151,7 +142,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     )
     save_cell_counts(merged_obj, paste0("after_clustering_", comp_group), dirs$qc)
 
-    # ── SingleR ────────────────────────────────────────────────────────────────
     merged_obj <- run_singler_annotation(
       seurat_obj     = merged_obj,
       species_target = cfg$pipeline$species_target,
@@ -160,7 +150,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       singler_cfg    = cfg$singler
     )
 
-    # ── Escape Enrichment ──────────────────────────────────────────────────────
     if (isTRUE(cfg$escape$run)) {
       merged_obj <- run_escape_enrichment(
         seurat_obj = merged_obj,
@@ -171,7 +160,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       )
     }
 
-    # ── QC HTML Report ─────────────────────────────────────────────────────────
 
     if (requireNamespace("rmarkdown", quietly = TRUE)) {
       template_path <- cfg$report$rmd_template %||% {
@@ -196,7 +184,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
         generate_qc_report(
           seurat_obj   = merged_obj,
           comp_group   = comp_group,
-          out_dir      = dirs$qc,          # HTML saved inside QC folder
+          out_dir      = dirs$qc,          
           author       = cfg$report$author %||% "Pipeline User",
           title        = cfg$report$title  %||% paste("QC Report -", comp_group),
           rmd_template = template_path,
@@ -207,14 +195,12 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       message("   [SKIP] rmarkdown not installed – QC report not generated.")
     }
 
-    # ── Main groupings ─────────────────────────────────────────────────────────
     groupings_main <- cfg$groupings_main
     if (is.null(groupings_main)) {
       singler_names  <- vapply(cfg$singler$labels, function(x) x$name, character(1))
       groupings_main <- unique(c(cfg$processing$cluster_col, singler_names))
     }
 
-    # ── Main analysis unit ─────────────────────────────────────────────────────
     run_analysis_unit(
       seurat_obj   = merged_obj,
       display_name = "Main",
@@ -226,7 +212,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       cfg          = cfg
     )
 
-    # ── Subsets ────────────────────────────────────────────────────────────────
     for (s in cfg$subsets) {
       safe_run(
         .run_subset(main_obj = merged_obj, subset_cfg = s,
@@ -236,7 +221,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       )
     }
 
-    # ── Interactive Results HTML Report ────────────────────────────────────────
     if (requireNamespace("rmarkdown", quietly = TRUE)) {
       results_template_path <- cfg$report$results_rmd_template %||% {
 
@@ -260,7 +244,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
         generate_results_report(
           seurat_obj   = merged_obj,
           comp_group   = comp_group,
-          out_dir      = dirs$base,          # saved in group root, not QC sub-folder
+          out_dir      = dirs$base,          
           groupings    = groupings_main,
           author       = cfg$report$author %||% "Pipeline User",
           title        = cfg$report$title  %||% paste("Results Report -", comp_group),
@@ -286,7 +270,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
   }
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
 #' Run all analyses for a Seurat object (main or subset)
 #' @param seurat_obj Seurat object
 #' @param display_name Character
@@ -338,7 +321,6 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
                          reduction = cfg$processing$reduction)
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
 #' Run all analyses for one grouping column
 #' @param seurat_obj Seurat object. Must already have PrepSCTFindMarkers applied.
 #' @param group_col Character
@@ -358,7 +340,6 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   group_dir <- file.path(base_dir, suffix, file_prefix, group_col)
   dirs      <- .make_analysis_dirs(group_dir)
 
-  # ── UMAP ────────────────────────────────────────────────────────────────────
   singler_entry <- Filter(function(l) l$name == group_col, cfg$singler$labels)
   is_fine       <- length(singler_entry) > 0L && isTRUE(singler_entry[[1L]]$is_fine)
   umap_w        <- if (is_fine) cfg$plot$umap_width_fine  else cfg$plot$umap_width_standard
@@ -385,15 +366,12 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     file.path(dirs$UMAP, paste0("UMAP_", file_prefix, "_", group_col, ".png")),
     width = umap_w, height = umap_h)
 
-  # ── Violin plots ────────────────────────────────────────────────────────────
   generate_violin_plots(seurat_obj, genes_list, dirs$VlnPlot, file_prefix,
                          group_by_col = group_col)
 
-  # ── Proportions ─────────────────────────────────────────────────────────────
   run_proportion_analysis(seurat_obj, group_col, dirs$DEG, file_prefix)
   run_scproportion_test(seurat_obj,   group_col, dirs$DEG, file_prefix)
 
-  # ── DEG ─────────────────────────────────────────────────────────────────────
   all_markers <- run_deg_analysis(seurat_obj,
     logfc_threshold     = cfg$deg$logfc_threshold,
     min_pct             = cfg$deg$min_pct,
@@ -422,7 +400,6 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     width           = cfg$plot$deg_umap_width,
     height          = cfg$plot$deg_umap_height)
 
-  # ── Average expression ──────────────────────────────────────────────────────
   for (layer in cfg$deg$avg_expression_layers) {
     save_average_expression(seurat_obj, dirs$DEG, file_prefix,
       group_by_col    = group_col,
@@ -432,12 +409,10 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
       table_row_names = cfg$deg$table_row_names)
   }
 
-  # ── Pseudobulk ──────────────────────────────────────────────────────────────
   save_pseudobulk_counts(seurat_obj, dirs$DEG, file_prefix,
                          group_by_col = group_col,
                          table_sep    = cfg$deg$table_sep)
 
-  # ── Heatmaps ────────────────────────────────────────────────────────────────
   generate_cluster_markers_and_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix)
 
   generate_cluster_zscore_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix,
@@ -458,7 +433,6 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
                                species_target = cfg$pipeline$species_target)
   generate_top_expressed_genes(seurat_obj, group_col, dirs$Heatmap, file_prefix)
 
-  # ── Gene Signature Panels (heatmap + dotplot) ───────────────────────────────
   for (sig in cfg$gene_signatures) {
     scale_dot <- sig$dot_scale %||% FALSE
     safe_run(
@@ -509,14 +483,12 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
         )
       }
 
-  # ── Escape Enrichment Plots ─────────────────────────────────────────────────
   if (isTRUE(cfg$escape$run)) {
     generate_escape_plots(seurat_obj, method = cfg$escape$method,
                           group_col = group_col, out_dir = group_dir,
                           prefix = file_prefix)
   }
 
-  # ── Correlations ────────────────────────────────────────────────────────────
   cx <- cfg$genes$corr_genes_x
   cy <- cfg$genes$corr_genes_y
   if (!is.null(cx) && !is.null(cy) && length(cx) > 0L && length(cy) > 0L) {
@@ -536,7 +508,6 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   }
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
 .run_subset <- function(main_obj, subset_cfg, base_dir, suffix, cfg) {
   message("\n=== Subset: ", subset_cfg$display_name, " ===")
 

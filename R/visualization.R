@@ -374,9 +374,6 @@ generate_subcluster_heatmaps <- function(seurat_obj, genes, out_dir, prefix) {
     return(invisible(NULL))
   }
 
-  # ---------------------------------------------------------
-  # 1. Per-Cell Heatmap (DoHeatmap)
-  # ---------------------------------------------------------
   seurat_obj <- Seurat::ScaleData(seurat_obj, features = genes, verbose = FALSE)
   n_cond_groups <- length(unique(as.character(seurat_obj$condition)))
   cond_label_style <- .heatmap_label_params(n_cond_groups)
@@ -401,9 +398,6 @@ generate_subcluster_heatmaps <- function(seurat_obj, genes, out_dir, prefix) {
     plot = p_cell, width = 10, height = 8
   )
 
-  # ---------------------------------------------------------
-  # 2. Aggregated Heatmap (ggplot2)
-  # ---------------------------------------------------------
   mat <- Seurat::GetAssayData(seurat_obj, assay = Seurat::DefaultAssay(seurat_obj), layer = "scale.data")
   mat <- mat[genes, , drop = FALSE]
 
@@ -464,22 +458,6 @@ generate_subcluster_heatmaps <- function(seurat_obj, genes, out_dir, prefix) {
 }
 
 #' Generate Gene Signature Panel (per-cell heatmap + aggregated heatmap + DotPlot)
-#'
-#' Reproduces, for an arbitrary named gene list, the same three views used to
-#' inspect a curated gene panel: a per-cell z-score heatmap (DoHeatmap), a
-#' group-averaged z-score heatmap, and a Seurat DotPlot (average expression +
-#' percent expressed). Designed to be called once per grouping column, so it
-#' naturally covers every cluster/subcluster grouping when invoked from
-#' \code{run_grouping_analysis()} (Main analysis unit AND every subset).
-#'
-#' The per-cell heatmap and the aggregated heatmap nest \code{condition_col}
-#' inside each \code{group_by_col} level (e.g. "B cells | WT", "B cells | KO"),
-#' so WT/KO stays visually separated within every cluster/label instead of
-#' being averaged together. The DotPlot uses Seurat's own \code{split.by} for
-#' the same purpose. This nesting is skipped automatically when
-#' \code{group_by_col} and \code{condition_col} are the same column, or when
-#' \code{condition_col} has fewer than 2 levels — nesting a value against
-#' itself (e.g. an already-computed fold-change/ratio) would be meaningless.
 #'
 #' @param seurat_obj Seurat object (DefaultAssay should already be set, e.g. "SCT")
 #' @param genes Character vector of gene symbols making up the signature
@@ -548,7 +526,6 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
   file_tag <- paste0(prefix, "_", group_by_col, "_", .safe_filename(signature_name))
   label_style <- .heatmap_label_params(n_combo)
 
-  # ---- Per-cell heatmap (unchanged, uses SCT) ----
   seurat_obj <- safe_run(
     Seurat::ScaleData(seurat_obj, features = genes, verbose = FALSE),
     label = paste0("ScaleData (", signature_name, ")"), fallback = seurat_obj
@@ -582,7 +559,6 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
       width = calc_width, height = max(6, length(genes) * 0.5 + 2))
   }
 
-  # ---- Aggregated heatmap (unchanged, uses SCT) ----
   agg_plot <- safe_run({
     mat <- Seurat::GetAssayData(seurat_obj, assay = Seurat::DefaultAssay(seurat_obj),
                                 layer = "scale.data")
@@ -644,7 +620,6 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
       width = calc_width, height = max(4, length(genes) * 0.4))
   }
 
-  # ---- DotPlot – RNA assay, scale controlled by scale_dotplot ----
   p_dot <- safe_run({
     dp <- if (has_condition) {
       Seurat::DotPlot(
@@ -673,7 +648,6 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
                        ")"),
         x = "Features", y = group_by_col
       ) +
-      # Force both legends to appear and set their titles
       ggplot2::guides(
         colour = ggplot2::guide_colorbar(title = "Avg Expression", 
                                          barheight = unit(4, "cm")),
@@ -682,7 +656,6 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
       ggplot2::theme(
         plot.title  = ggplot2::element_text(hjust = 0.5, face = "bold"),
         axis.text.y = ggplot2::element_text(size = label_style$size * 2.2),
-        # Ensure legend is placed on the right and not clipped
         legend.position = "right",
         legend.box = "vertical"
       )
@@ -690,7 +663,6 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
   }, label = paste0("DotPlot (", signature_name, ")"))
 
   if (!is.null(p_dot)) {
-    # Increase width generously to accommodate the legend
     save_png(p_dot,
       file.path(out_dir, paste0(file_tag, "_DotPlot.png")),
       width  = max(14, length(genes) * 0.7 + 8),  # extra space for legends
@@ -799,7 +771,6 @@ generate_cluster_zscore_heatmap_split_condition <- function(seurat_obj,
     return(invisible(NULL))
   }
 
-  # Check columns
   if (!group_by_col %in% colnames(seurat_obj@meta.data)) {
     message("   [SKIP] '", group_by_col, "' not in metadata")
     return(invisible(NULL))
@@ -809,14 +780,12 @@ generate_cluster_zscore_heatmap_split_condition <- function(seurat_obj,
     return(invisible(NULL))
   }
 
-  # Create combined group_condition identity
   seurat_obj$group_condition <- paste(
     seurat_obj@meta.data[[group_by_col]],
     seurat_obj@meta.data[[condition_col]],
     sep = " | "
   )
 
-  # Only keep combinations that have at least 3 cells (optional)
   valid_groups <- get_valid_groups(seurat_obj@meta.data, "group_condition", min_cells = 3L)
   if (length(valid_groups) < 2L) {
     message("   [SKIP Z-Score Heatmap (split)] fewer than 2 valid cluster×condition groups")
@@ -827,32 +796,27 @@ generate_cluster_zscore_heatmap_split_condition <- function(seurat_obj,
   avg <- get_avg_expr(seurat_obj, layer = "data")
   if (is.null(avg) || nrow(avg) == 0L) return(invisible(NULL))
 
-  # Filter junk genes
   junk_pat <- get_junk_pattern(species_target)
   avg_filt <- avg[!grepl(junk_pat, rownames(avg)), , drop = FALSE]
   if (nrow(avg_filt) < 2L) return(invisible(NULL))
 
-  # Select top genes per combined group
   top_genes <- unique(unlist(lapply(seq_len(ncol(avg_filt)), function(i) {
     n <- min(top_n, nrow(avg_filt))
     names(sort(avg_filt[, i], decreasing = TRUE)[seq_len(n)])
   })))
   if (length(top_genes) < 2L) return(invisible(NULL))
 
-  # Build heatmap matrix (rows = genes, columns = group_condition)
   mat <- as.matrix(avg_filt[top_genes, , drop = FALSE])
 
-  # Row z-score
   mat_scaled <- t(scale(t(mat)))
 
-  # Define colour breaks
   breaks_list <- seq(-2, 2, by = 0.04)
   color_pal   <- grDevices::colorRampPalette(c("blue", "white", "red"))(length(breaks_list))
 
   ph <- safe_run(
     pheatmap::pheatmap(
       mat_scaled,
-      scale         = "none",          # already scaled
+      scale         = "none",         
       cluster_cols  = TRUE,
       cluster_rows  = TRUE,
       show_rownames = TRUE,
@@ -921,7 +885,6 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
     return(invisible(NULL))
   }
 
-  # Check columns
   if (!group_by_col %in% colnames(seurat_obj@meta.data)) {
     message("   [SKIP Per-group DotPlot] '", group_by_col, "' not in metadata")
     return(invisible(NULL))
@@ -931,20 +894,17 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
     return(invisible(NULL))
   }
 
-  # Get groups with enough cells (global, but we'll subset later)
   all_groups <- as.character(unique(seurat_obj@meta.data[[group_by_col]]))
-  all_groups <- all_groups[!is.na(all_groups) & all_groups != "Unassigned"]  # optional filter
+  all_groups <- all_groups[!is.na(all_groups) & all_groups != "Unassigned"]  
 
   make_dir(out_dir)
 
-  # Determine dot colours if not provided
   if (is.null(dot_colors)) {
     n_cond <- length(unique(seurat_obj@meta.data[[condition_col]]))
     dot_colors <- scales::hue_pal()(n_cond)
   }
 
   for (grp in all_groups) {
-    # Subset cells for this group
     cells_keep <- rownames(seurat_obj@meta.data)[seurat_obj@meta.data[[group_by_col]] == grp]
     if (length(cells_keep) < min_cells_per_group) {
       message("   [SKIP] Group '", grp, "' has only ", length(cells_keep),
@@ -952,14 +912,12 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
       next
     }
 
-    # Create temporary object with only these cells
     sub_obj <- tryCatch(
       subset(seurat_obj, cells = cells_keep),
       error = function(e) NULL
     )
     if (is.null(sub_obj) || ncol(sub_obj) == 0L) next
 
-    # Check that both conditions are present in this subset (optional, but we can still plot)
     conds_present <- unique(sub_obj@meta.data[[condition_col]])
     if (length(conds_present) < 2L) {
       message("   [SKIP] Group '", grp, "' has only one condition (",
@@ -967,11 +925,10 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
       next
     }
 
-    # Create DotPlot – red-blue gradient, explicit legend title, and scale controlled by scale_dotplot
     p <- tryCatch({
       Seurat::DotPlot(sub_obj,
                       features = genes,
-                      group.by = condition_col,    # conditions on y-axis
+                      group.by = condition_col,    
                       cols     = c("blue", "red"),
                       scale    = scale_dotplot) +  
         Seurat::RotatedAxis() +
@@ -981,7 +938,6 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
           x = "Genes",
           y = condition_col
         ) +
-        # Explicitly add legend for average expression
         ggplot2::guides(colour = ggplot2::guide_colorbar(title = "Avg Expression")) +
         ggplot2::theme(
           plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
@@ -994,7 +950,6 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
       filename <- file.path(out_dir,
                             paste0(prefix, "_", group_by_col, "_",
                                    signature_name, "_", safe_grp, "_DotPlot.png"))
-      # Increase width to ensure legend is visible
       save_png(p, filename,
                width = max(10, length(genes) * 0.6 + 5),
                height = max(4, 1 + length(conds_present) * 0.5))
@@ -1040,7 +995,6 @@ generate_gene_signature_boxplots <- function(seurat_obj,
     return(invisible(NULL))
   }
 
-  # Check required columns
   if (!group_by_col %in% colnames(seurat_obj@meta.data)) {
     message("   [SKIP Boxplot] '", group_by_col, "' not in metadata")
     return(invisible(NULL))
@@ -1050,7 +1004,6 @@ generate_gene_signature_boxplots <- function(seurat_obj,
     return(invisible(NULL))
   }
 
-  # Ensure RNA assay has log-normalised data
   Seurat::DefaultAssay(seurat_obj) <- "RNA"
   available_layers <- tryCatch(
     SeuratObject::Layers(seurat_obj[["RNA"]]),
@@ -1061,14 +1014,12 @@ generate_gene_signature_boxplots <- function(seurat_obj,
   }
   expr <- Seurat::GetAssayData(seurat_obj, assay = "RNA", layer = "data")
 
-  # Get groups with enough cells
   all_groups <- as.character(unique(seurat_obj@meta.data[[group_by_col]]))
   all_groups <- all_groups[!is.na(all_groups) & all_groups != "Unassigned"]
 
   make_dir(out_dir)
 
   for (grp in all_groups) {
-    # Subset cells for this group
     cells_keep <- rownames(seurat_obj@meta.data)[seurat_obj@meta.data[[group_by_col]] == grp]
     if (length(cells_keep) < min_cells_per_group) {
       message("   [SKIP Boxplot] Group '", grp, "' has only ", length(cells_keep),
@@ -1076,10 +1027,8 @@ generate_gene_signature_boxplots <- function(seurat_obj,
       next
     }
 
-    # Extract expression matrix for these cells (genes x cells)
     mat <- as.matrix(expr[genes, cells_keep, drop = FALSE])
 
-    # Prepare condition vector
     cond_vec <- seurat_obj@meta.data[cells_keep, condition_col]
     cond_levels <- sort(unique(cond_vec))
     if (length(cond_levels) < 2L) {
@@ -1087,7 +1036,6 @@ generate_gene_signature_boxplots <- function(seurat_obj,
       next
     }
 
-    # Reshape to long format: Gene, Condition, Expression
     df_long <- data.frame(
       Gene = rep(rownames(mat), ncol(mat)),
       Condition = rep(cond_vec, each = nrow(mat)),
@@ -1095,7 +1043,6 @@ generate_gene_signature_boxplots <- function(seurat_obj,
     )
     df_long$Condition <- factor(df_long$Condition, levels = cond_levels)
 
-    # Create box plot
     p <- ggplot2::ggplot(df_long,
            ggplot2::aes(x = Gene, y = Expression, fill = Condition)) +
       ggplot2::geom_boxplot(
@@ -1117,7 +1064,6 @@ generate_gene_signature_boxplots <- function(seurat_obj,
         legend.position = "right"
       )
 
-    # Optionally add jittered points
     if (add_jitter) {
       p <- p + ggplot2::geom_jitter(
         ggplot2::aes(color = Condition),
@@ -1128,7 +1074,6 @@ generate_gene_signature_boxplots <- function(seurat_obj,
       )
     }
 
-    # Save
     safe_grp <- .safe_filename(grp)
     filename <- file.path(out_dir,
                           paste0(prefix, "_", group_by_col, "_",

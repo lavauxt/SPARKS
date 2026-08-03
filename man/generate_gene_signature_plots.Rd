@@ -11,7 +11,8 @@ generate_gene_signature_plots(
   prefix,
   group_by_col,
   signature_name,
-  condition_col = "condition"
+  condition_col = "condition",
+  scale_dotplot = FALSE
 )
 }
 \arguments{
@@ -30,22 +31,12 @@ generate_gene_signature_plots(
 
 \item{condition_col}{Character. Metadata column holding the WT/KO-style condition,
 nested inside each group. Default "condition".}
+
+\item{scale_dotplot}{Logical. If TRUE, the DotPlot uses row-scaled expression
+(z-score across groups) with colour scale centred at 0; if FALSE (default),
+raw average expression is shown. This corresponds to Seurat's `scale`
+argument in DotPlot.}
 }
 \description{
-Reproduces, for an arbitrary named gene list, the same three views used to
-inspect a curated gene panel: a per-cell z-score heatmap (DoHeatmap), a
-group-averaged z-score heatmap, and a Seurat DotPlot (average expression +
-percent expressed). Designed to be called once per grouping column, so it
-naturally covers every cluster/subcluster grouping when invoked from
-\code{run_grouping_analysis()} (Main analysis unit AND every subset).
-}
-\details{
-The per-cell heatmap and the aggregated heatmap nest \code{condition_col}
-inside each \code{group_by_col} level (e.g. "B cells | WT", "B cells | KO"),
-so WT/KO stays visually separated within every cluster/label instead of
-being averaged together. The DotPlot uses Seurat's own \code{split.by} for
-the same purpose. This nesting is skipped automatically when
-\code{group_by_col} and \code{condition_col} are the same column, or when
-\code{condition_col} has fewer than 2 levels — nesting a value against
-itself (e.g. an already-computed fold-change/ratio) would be meaningless.
+Generate Gene Signature Panel (per-cell heatmap + aggregated heatmap + DotPlot)
 }

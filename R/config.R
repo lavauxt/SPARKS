@@ -5,11 +5,9 @@
 #' @export
 load_pipeline_config <- function(base_config_path, override_config_path = NULL) {
 
-  # 1. Load the base template
   if (!file.exists(base_config_path)) stop("Base config not found: ", base_config_path)
   cfg <- yaml::yaml.load_file(base_config_path)
 
-  # 2. Merge overrides if provided
   if (!is.null(override_config_path) && file.exists(override_config_path)) {
     override_cfg <- yaml::yaml.load_file(override_config_path)
     cfg <- utils::modifyList(cfg, override_cfg)
@@ -18,7 +16,6 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
 
   cfg$pipeline$config_dir <- dirname(normalizePath(base_config_path))
 
-  # ── Required top-level keys ────────────────────────────────────────────────
 
   required <- c("pipeline", "qc", "processing", "deg", "plot",
                 "species", "singler", "groupings_main")
@@ -26,7 +23,6 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   if (length(missing) > 0L)
     stop("Config missing required keys: ", paste(missing, collapse = ", "))
 
-  # ── Processing Defaults ───────────────────────────────────────────────────
   cfg$processing$cluster_col        <- cfg$processing$cluster_col        %||% "seurat_clusters"
   cfg$processing$condition_col      <- cfg$processing$condition_col      %||% "condition"
   cfg$processing$reduction          <- cfg$processing$reduction          %||% "umap"
@@ -43,28 +39,23 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
     cfg$processing$pca_dims <- seq.int(from, to)
   }
 
-  # ── Sex Scoring Defaults ─────────────────────────────────────────────
   cfg$sex_scoring$run      <- cfg$sex_scoring$run      %||% FALSE
   cfg$sex_scoring$regress  <- cfg$sex_scoring$regress  %||% FALSE
   cfg$sex_scoring$markers  <- cfg$sex_scoring$markers  %||% list(female = c(), male = c())
 
-  # ── Cell Cycle Defaults ───────────────────────────────────────────────────
   cfg$cell_cycle$run     <- cfg$cell_cycle$run     %||% FALSE
   cfg$cell_cycle$regress <- cfg$cell_cycle$regress %||% FALSE
 
-  # ── Species Defaults ─────────────────────────────────────────────────────
   cfg$species$mt_pattern           <- cfg$species$mt_pattern           %||% "^mt-"
   cfg$species$gene_removal_pattern <- cfg$species$gene_removal_pattern %||% "^(mt-|Rps|Rpl|Rrn|Rn|Hb|Gm).*|.*Rik$"
   cfg$species$genes_to_remove      <- cfg$species$genes_to_remove      %||% c()
 
-  # ── QC Defaults ───────────────────────────────────────────────────────────
   cfg$qc$min_features   <- cfg$qc$min_features   %||% 200L
   cfg$qc$max_features   <- cfg$qc$max_features   %||% 6000L
   cfg$qc$max_counts     <- cfg$qc$max_counts     %||% 30000L
   cfg$qc$max_mt_percent <- cfg$qc$max_mt_percent %||% 10
   cfg$qc$min_cells      <- cfg$qc$min_cells      %||% 3L
 
-  # ── DEG Defaults ──────────────────────────────────────────────────────────
   cfg$deg$logfc_threshold       <- cfg$deg$logfc_threshold       %||% 0.25
   cfg$deg$min_pct               <- cfg$deg$min_pct               %||% 0.1
   cfg$deg$min_p_val_adj         <- cfg$deg$min_p_val_adj         %||% 0.05
@@ -75,7 +66,6 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$deg$table_quote           <- cfg$deg$table_quote           %||% FALSE
   cfg$deg$table_row_names       <- cfg$deg$table_row_names       %||% FALSE
 
-  # ── Plotting Defaults ─────────────────────────────────────────────────────
   cfg$plot$top_genes_heatmap_n  <- cfg$plot$top_genes_heatmap_n  %||% 10L
   cfg$plot$umap_width_standard  <- cfg$plot$umap_width_standard  %||% 14
   cfg$plot$umap_height_standard <- cfg$plot$umap_height_standard %||% 7
@@ -96,19 +86,16 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$plot$deg_umap_width       <- cfg$plot$deg_umap_width       %||% 8
   cfg$plot$deg_umap_height      <- cfg$plot$deg_umap_height      %||% 7
 
-  # ── SingleR Defaults ──────────────────────────────────────────────────────
   cfg$singler$unassigned_label    <- cfg$singler$unassigned_label    %||% "Unassigned"
   cfg$singler$min_cells_per_group <- cfg$singler$min_cells_per_group %||% 10L
   cfg$singler$labels              <- cfg$singler$labels              %||% list()
   cfg$singler$label_names         <- sapply(cfg$singler$labels, `[[`, "name")
 
-  # ── Escape Defaults ───────────────────────────────────────────────────────
   cfg$escape$run      <- cfg$escape$run      %||% FALSE
   cfg$escape$method   <- cfg$escape$method   %||% "ssGSEA"
   cfg$escape$library  <- cfg$escape$library  %||% "H"
   cfg$escape$min_size <- cfg$escape$min_size %||% 5
 
-  # ── Labeling & Gene Defaults ─────────────────────────────────────────────
   cfg$labeling$min_subset_cells          <- cfg$labeling$min_subset_cells          %||% 50L
   cfg$labeling$unassigned_suffix         <- cfg$labeling$unassigned_suffix         %||% "_Unassigned"
   cfg$labeling$marker_positive_threshold <- cfg$labeling$marker_positive_threshold %||% 0.1
@@ -119,12 +106,6 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$genes$corr_genes_x  <- cfg$genes$corr_genes_x  %||% NULL
   cfg$genes$corr_genes_y  <- cfg$genes$corr_genes_y  %||% NULL
 
-  # ── Gene Signature Panels ─────────────────────────────────────────────────
-  # Named gene lists (e.g. "Lipid_Scavenger", "Vascular_Tightness") for which
-  # a per-cell z-score heatmap, an aggregated z-score heatmap, and a DotPlot
-  # (avg expression + pct expressed) are generated automatically for every
-  # grouping column of every analysis unit (Main AND every subset/subcluster).
-  # Each entry: list(name = "...", genes = c("Gene1", "Gene2", ...))
   cfg$gene_signatures <- cfg$gene_signatures %||% list()
   if (length(cfg$gene_signatures) > 0L) {
     bad <- vapply(cfg$gene_signatures, function(s) {
@@ -137,7 +118,6 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
     }
   }
 
-  # ── Parallelization Defaults ──────────────────────────────────────────────
   cfg$parallel$enable      <- cfg$parallel$enable      %||% FALSE
   cfg$parallel$workers     <- cfg$parallel$workers     %||% 4L
   cfg$parallel$strategy    <- cfg$parallel$strategy    %||% "multisession"

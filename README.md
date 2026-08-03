@@ -277,23 +277,6 @@ results_dir/
       └── RData/
           └── Group_1_Seurat_Processed.rds   # Production-ready Seurat binary object file
 ```
-## Changelog
-
-- **Fixed**: HTML reports (`QC_report_*.html`, `Results_report_*.html`) were
-  silently never generated once SPARKS was installed as a package, because
-  the `.Rmd` templates were not shipped inside the package and the lookup
-  only checked the config's directory and the current working directory.
-  Templates now live in `inst/rmd/` and are located via `system.file()` as a
-  final fallback. `rmarkdown`, `knitr`, `DT`, `plotly`, `htmltools`, and
-  `RColorBrewer` are now declared in `Suggests` so `dependencies = TRUE`
-  installs them.
-- **Fixed**: `DESCRIPTION`'s `Collate` field referenced `pipeline_core.R` and
-  `escape_analysis.R`, which don't exist in this package — the real files are
-  `main.R` and `enrichment_analysis.R`. Corrected to avoid collation issues.
-- **Added**: `gene_signatures` config block — named gene panels (e.g. a lipid
-  scavenger receptor set, a vascular tightness/junction set) that
-  automatically get a per-cell z-score heatmap, an averaged z-score heatmap,
-  and a DotPlot for every grouping column of the Main unit and every subset.
 
 ## License
 
