@@ -40,6 +40,12 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     dirs       <- .setup_group_dirs(cfg$pipeline$results_dir, comp_group)
 
     protocol_objects <- lapply(seq_len(nrow(group_meta)), function(i) {
+      qf <- if ("quant_format" %in% colnames(group_meta) &&
+                nzchar(group_meta$quant_format[i] %||% "")) {
+        group_meta$quant_format[i]
+      } else {
+        NULL
+      }
       safe_run(
         process_single_sample(
           folder_id            = group_meta$folder_id[i],
@@ -56,7 +62,9 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
           max_counts           = cfg$qc$max_counts,
           max_mt_percent       = cfg$qc$max_mt_percent,
           min_cells            = cfg$qc$min_cells,
-          cfg                  = cfg
+          cfg                  = cfg,
+          raw_matrix_dir       = dirs$raw_matrix,
+          quant_format         = qf
         ),
         label = paste0("process_single_sample: ", group_meta$folder_id[i])
       )
@@ -76,7 +84,16 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     cond_levels <- unique(as.character(group_meta$protocol))
     merged_obj[[cond_col]] <- factor(cond_vec, levels = cond_levels)
 
-    merged_obj$sample <- factor(cond_vec, levels = cond_levels)
+    # BUG FIX: this used to alias `sample` to the condition/protocol vector
+    # (factor(cond_vec, ...)), i.e. only as many distinct values as there are
+    # conditions (typically 2, e.g. WT/KO). save_pseudobulk_counts() counts
+    # unique `sample` values against `min_replicates` (default 3) to decide
+    # whether to pseudobulk -- with `sample` == condition that count was
+    # always the number of *conditions*, never the number of biological
+    # replicates, so pseudobulk export was silently skipped on effectively
+    # every realistic dataset. `orig.ident` (set in process_single_sample()
+    # to protocol_folderid, unique per replicate) is what this should hold.
+    merged_obj$sample <- factor(as.character(merged_obj$orig.ident))
     save_cell_counts(merged_obj, paste0("before_SCT_", comp_group), dirs$qc)
 
 

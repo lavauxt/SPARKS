@@ -10,7 +10,14 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
 
   if (!is.null(override_config_path) && file.exists(override_config_path)) {
     override_cfg <- yaml::yaml.load_file(override_config_path)
-    cfg <- utils::modifyList(cfg, override_cfg)
+    # BUG FIX: modifyList()'s default keep.null = FALSE *deletes* any key the
+    # override sets to null/~ instead of setting it to NULL -- e.g. an
+    # override with `groupings_main: ~` (meant to force auto-detection) would
+    # silently remove "groupings_main" from cfg entirely, which then fails
+    # the required-keys check below even though the override was written
+    # correctly. Confirmed empirically: modifyList(list(x=1), list(x=NULL))
+    # drops `x`; keep.null=TRUE sets it to NULL and keeps the key.
+    cfg <- utils::modifyList(cfg, override_cfg, keep.null = TRUE)
   }
 
 
@@ -49,6 +56,14 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$species$mt_pattern           <- cfg$species$mt_pattern           %||% "^mt-"
   cfg$species$gene_removal_pattern <- cfg$species$gene_removal_pattern %||% "^(mt-|Rps|Rpl|Rrn|Rn|Hb|Gm).*|.*Rik$"
   cfg$species$genes_to_remove      <- cfg$species$genes_to_remove      %||% c()
+
+  # Input format: auto | alevin | 10x | 10x_h5 | starsolo | h5ad | mtx.
+  # See .load_counts() and export_raw_matrix() in processing.R.
+  cfg$input$format            <- cfg$input$format            %||% "auto"
+  cfg$input$starsolo_feature  <- cfg$input$starsolo_feature  %||% "Gene"
+  cfg$input$h5ad_raw_slot     <- cfg$input$h5ad_raw_slot     %||% "auto"
+  cfg$input$save_raw_matrix   <- cfg$input$save_raw_matrix   %||% TRUE
+  cfg$input$raw_matrix_format <- cfg$input$raw_matrix_format %||% "mtx"
 
   cfg$qc$min_features   <- cfg$qc$min_features   %||% 200L
   cfg$qc$max_features   <- cfg$qc$max_features   %||% 6000L
@@ -89,7 +104,18 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$singler$unassigned_label    <- cfg$singler$unassigned_label    %||% "Unassigned"
   cfg$singler$min_cells_per_group <- cfg$singler$min_cells_per_group %||% 10L
   cfg$singler$labels              <- cfg$singler$labels              %||% list()
-  cfg$singler$label_names         <- sapply(cfg$singler$labels, `[[`, "name")
+  # BUG FIX: sapply() on an empty labels list returns list() (not
+  # character(0)). c(character_vector, list()) then silently coerces the
+  # whole result to a list -- groupings_main below, and the analogous
+  # groupings built in .run_subset() -- which quietly breaks downstream
+  # %in%/paste() comparisons whenever singler$labels is empty (e.g. someone
+  # disables SingleR for a quick test run). Confirmed empirically. vapply
+  # with an explicit empty-case guard keeps this a character vector always.
+  cfg$singler$label_names <- if (length(cfg$singler$labels) > 0L) {
+    vapply(cfg$singler$labels, `[[`, character(1L), "name")
+  } else {
+    character(0)
+  }
 
   cfg$escape$run      <- cfg$escape$run      %||% FALSE
   cfg$escape$method   <- cfg$escape$method   %||% "ssGSEA"
@@ -158,6 +184,9 @@ load_sample_table <- function(cfg) {
   df$folder_id        <- as.character(df$folder_id)
   df$protocol         <- as.character(df$protocol)
   df$comparison_group <- as.character(df$comparison_group)
+  if ("quant_format" %in% colnames(df)) {
+    df$quant_format <- as.character(df$quant_format)
+  }
 
   return(df)
 }

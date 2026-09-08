@@ -132,7 +132,14 @@ get_avg_expr <- function(seurat_obj, layer = "data") {
 #' @export
 get_junk_pattern <- function(species = "Mouse") {
   if (tolower(species) == "human") {
-    "^(MT-|RPS|RPL|RNR|RNA)"
+    # BUG FIX: the old pattern's bare "RNA" branch matched anything merely
+    # *starting* with "RNA" -- RNASEH2A/B/C, RNASE1-13, RNASET2, RNASEK,
+    # RNASEL, etc. are real, biologically meaningful genes, not junk, and were
+    # being silently dropped from generate_expression_heatmap()'s "top
+    # expressed genes" heatmap for every human run. Dropped the ill-specified
+    # "RNR|RNA" branch and aligned this with the vetted pattern already used
+    # in the human config template's species$gene_removal_pattern.
+    "^(MT-|RPS|RPL|HBA[12]?|HBB$)"
   } else {
     "^(mt-|Rps|Rpl|Rrn|Rn|Hb|Gm).*|.*Rik$"
   }
@@ -203,9 +210,10 @@ get_junk_pattern <- function(species = "Mouse") {
 
 .setup_group_dirs <- function(results_dir, comp_group) {
   dirs <- list(
-    base  = file.path(results_dir, comp_group),
-    qc    = file.path(results_dir, comp_group, "QC"),
-    rdata = file.path(results_dir, comp_group, "RData")
+    base       = file.path(results_dir, comp_group),
+    qc         = file.path(results_dir, comp_group, "QC"),
+    rdata      = file.path(results_dir, comp_group, "RData"),
+    raw_matrix = file.path(results_dir, comp_group, "RawMatrix")
   )
   lapply(dirs, make_dir)
   dirs

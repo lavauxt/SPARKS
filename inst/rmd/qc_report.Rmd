@@ -61,6 +61,23 @@ kable(as.data.frame(cells_by_sample), col.names = c("Sample", "Number of cells")
 kable(as.data.frame(cells_by_condition), col.names = c("Condition", "Number of cells"))
 ```
 
+## Input data
+
+```{r input-data, results='asis'}
+if ("quant_format" %in% colnames(obj[[]])) {
+  fmt_df <- unique(obj@meta.data[, c("orig.ident", "quant_format"), drop = FALSE])
+  colnames(fmt_df) <- c("Sample", "Format")
+  kable(fmt_df)
+  if (!is.null(cfg) && isTRUE(cfg$input$save_raw_matrix)) {
+    cat("\nRaw, pre-QC count matrices were saved per sample under ",
+        "`results_dir/", group, "/RawMatrix/<folder_id>/` in ",
+        cfg$input$raw_matrix_format %||% "mtx", " format.\n", sep = "")
+  }
+} else {
+  cat("_(Input format metadata not available for this run.)_\n")
+}
+```
+
 ## Filtering history
 
 ```{r filtering-params, results='asis'}

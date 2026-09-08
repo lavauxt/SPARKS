@@ -4,8 +4,26 @@ pipeline:
   results_dir:    "./results"
   species_target: "Human" 
 
-# ── Sample table (TSV: folder_id, protocol, comparison_group) ─────────────────
+# ── Sample table (TSV: folder_id, protocol, comparison_group[, quant_format]) ──
   sample_table: "./sample_table.tsv"
+
+# ── Input data ─────────────────────────────────────────────────────────────────
+# format: how each sample folder under data_dir is read. "auto" inspects the
+# folder; override globally here, or per-sample via an optional quant_format
+# column in sample_table.tsv (blank cell = use the setting below).
+#   auto      - inspect the folder and pick one of the formats below
+#   alevin    - salmon alevin       (<folder>/alevin/quants_mat.gz)
+#   10x       - Cell Ranger MEX     (<folder>/outs/filtered_feature_bc_matrix/)
+#   10x_h5    - Cell Ranger HDF5    (<folder>/outs/*.h5, or a bare *.h5 file)
+#   starsolo  - STARsolo            (<folder>/Solo.out/<starsolo_feature>/{filtered,raw}/)
+#   h5ad      - AnnData             (a *.h5ad file directly under <folder>/)
+#   mtx       - generic MatrixMarket triplet (matrix.mtx/barcodes.tsv/features.tsv)
+input:
+  format:             "auto"
+  starsolo_feature:   "Gene"    # Gene | GeneFull | Velocyto
+  h5ad_raw_slot:      "auto"    # auto | layers:counts | raw | X
+  save_raw_matrix:    true
+  raw_matrix_format:  "mtx"     # mtx | h5 -> results_dir/<comparison_group>/RawMatrix/<folder_id>/
 
 # ── Species config ─────────────────────────────────────────────────────────────
 # ref_primary / ref_secondary: name of a celldex function (no parentheses)

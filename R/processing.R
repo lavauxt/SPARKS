@@ -1,27 +1,242 @@
-#' Load count matrix from Alevin or Cell Ranger output
-#' @param folder_id Character
-#' @param data_path Character. Root data directory
-#' @return Raw count matrix
+#' Detect the quantification format of a sample folder
+#'
+#' Looks for the on-disk layout of each supported format, in order:
+#' AnnData (.h5ad) > Alevin > Cell Ranger MEX > Cell Ranger HDF5 > STARsolo >
+#' a bare MatrixMarket triplet.
+#' @param sample_dir Character. Path to one sample's folder.
+#' @return Character format code, or NA if nothing recognizable was found.
 #' @keywords internal
-.load_counts <- function(folder_id, data_path) {
-  alevin_path <- file.path(data_path, folder_id, "alevin", "quants_mat.gz")
-  tenx_path   <- file.path(data_path, folder_id, "outs",
-                            "filtered_feature_bc_matrix")
+.detect_quant_format <- function(sample_dir) {
+  if (length(list.files(sample_dir, pattern = "\\.h5ad$", full.names = TRUE)) > 0L) {
+    return("h5ad")
+  }
+  if (file.exists(file.path(sample_dir, "alevin", "quants_mat.gz"))) {
+    return("alevin")
+  }
+  if (dir.exists(file.path(sample_dir, "outs", "filtered_feature_bc_matrix"))) {
+    return("10x")
+  }
+  if (length(list.files(file.path(sample_dir, "outs"), pattern = "\\.h5$", full.names = TRUE)) > 0L ||
+      length(list.files(sample_dir, pattern = "\\.h5$", full.names = TRUE)) > 0L) {
+    return("10x_h5")
+  }
+  if (dir.exists(file.path(sample_dir, "Solo.out"))) {
+    return("starsolo")
+  }
+  if (any(file.exists(file.path(sample_dir, c("matrix.mtx", "matrix.mtx.gz"))))) {
+    return("mtx")
+  }
+  NA_character_
+}
 
-  if (file.exists(alevin_path)) {
-    message("   Input: Alevin  ", folder_id)
-    txi  <- tximport::tximport(files = alevin_path, type = "alevin")
-    cnts <- txi$counts
-  } else if (dir.exists(tenx_path)) {
-    message("   Input: Cell Ranger  ", folder_id)
-    cnts <- Seurat::Read10X(data.dir = tenx_path)
-  } else {
-    stop("No valid input found in: ", file.path(data_path, folder_id),
-         "\n  Tried Alevin: ",  alevin_path,
-         "\n  Tried 10X:    ",  tenx_path)
+#' Read raw counts from an AnnData .h5ad file
+#'
+#' Tries \code{anndataR} first (pure R, no Python needed); falls back to
+#' \code{zellkonverter} (Bioconductor, uses a managed Python env) if that
+#' isn't installed. AnnData stores raw (pre-normalisation) counts in
+#' different places depending on the pipeline that wrote the file, so
+#' \code{raw_slot} controls where to look.
+#' @param path Character. Path to the .h5ad file.
+#' @param raw_slot Character. "auto" tries layers$counts, then raw.X, then X,
+#'   in that order; or force one of "layers:counts", "raw", "X" explicitly.
+#' @return Sparse matrix, genes x cells.
+#' @keywords internal
+.load_h5ad_counts <- function(path, raw_slot = "auto") {
+  if (requireNamespace("anndataR", quietly = TRUE)) {
+    adata <- anndataR::read_h5ad(path)
+    search_order <- if (identical(raw_slot, "auto")) c("layers:counts", "raw", "X") else raw_slot
+    mat <- NULL
+    used <- NULL
+    for (src in search_order) {
+      mat <- switch(src,
+        "layers:counts" = if (!is.null(adata$layers) && "counts" %in% names(adata$layers))
+                             adata$layers[["counts"]] else NULL,
+        "raw"           = if (!is.null(adata$raw)) adata$raw$X else NULL,
+        "X"             = adata$X,
+        NULL
+      )
+      if (!is.null(mat)) { used <- src; break }
+    }
+    if (is.null(mat)) {
+      stop("Could not find a counts matrix in ", path,
+           " (checked layers$counts, raw.X, X). Set input$h5ad_raw_slot explicitly.")
+    }
+    message("      -> using AnnData slot '", used, "' as raw counts")
+
+    # AnnData is cells x genes (obs x var); Seurat wants genes x cells.
+    mat <- Matrix::t(methods::as(mat, "CsparseMatrix"))
+    rownames(mat) <- adata$var_names
+    colnames(mat) <- adata$obs_names
+    return(mat)
   }
 
-  if (is.list(cnts)) cnts <- cnts[["Gene Expression"]]
+  if (requireNamespace("zellkonverter", quietly = TRUE)) {
+    sce <- zellkonverter::readH5AD(path)
+    assay_name <- if (identical(raw_slot, "auto")) {
+      an <- SummarizedExperiment::assayNames(sce)
+      if ("counts" %in% an) "counts" else an[1L]
+    } else raw_slot
+    message("      -> using zellkonverter assay '", assay_name, "' as raw counts")
+    return(methods::as(SummarizedExperiment::assay(sce, assay_name), "CsparseMatrix"))
+  }
+
+  stop(
+    "Reading .h5ad files requires either the 'anndataR' or 'zellkonverter' package.\n",
+    "  Install one of:\n",
+    "    remotes::install_github('scverse/anndataR')\n",
+    "    BiocManager::install('zellkonverter')"
+  )
+}
+
+#' Read a generic MatrixMarket triplet that doesn't follow 10x file naming
+#' @keywords internal
+.load_generic_mtx <- function(sample_dir, matrix_file = "matrix.mtx",
+                               barcodes_file = "barcodes.tsv",
+                               features_file = "features.tsv") {
+  .find <- function(name) {
+    hits <- file.path(sample_dir, c(name, paste0(name, ".gz")))
+    hits <- hits[file.exists(hits)]
+    if (length(hits) == 0L) stop("Could not find ", name, " (or .gz) in ", sample_dir)
+    hits[[1L]]
+  }
+  mtx      <- methods::as(Matrix::readMM(.find(matrix_file)), "CsparseMatrix")
+  barcodes <- readLines(.find(barcodes_file))
+  features <- utils::read.delim(.find(features_file), header = FALSE, stringsAsFactors = FALSE)
+
+  if (nrow(mtx) == length(barcodes) && ncol(mtx) == nrow(features)) {
+    mtx <- Matrix::t(mtx)  # was written cells x genes; transpose to genes x cells
+  }
+  rownames(mtx) <- features[[1L]]
+  colnames(mtx) <- barcodes
+  mtx
+}
+
+#' Warn if a "raw counts" matrix looks like it's actually already normalized
+#' @keywords internal
+.warn_if_noninteger_counts <- function(cnts, label = "") {
+  vals <- if (methods::is(cnts, "sparseMatrix")) cnts@x else as.numeric(as.matrix(cnts))
+  if (length(vals) == 0L) return(invisible(NULL))
+  samp <- vals[sample.int(length(vals), size = min(length(vals), 20000L))]
+  frac <- mean(abs(samp - round(samp)) > 1e-6)
+  if (frac > 0.01) {
+    warning(sprintf(
+      "%s: %.1f%% of a sample of matrix values are non-integer. This usually means the matrix is already normalised/log-transformed rather than raw counts -- double check input$h5ad_raw_slot (for AnnData input) or the detected format.",
+      label, 100 * frac))
+  }
+  invisible(NULL)
+}
+
+#' Export a raw count matrix as a standard, tool-agnostic scRNA-seq matrix
+#'
+#' Regardless of whether the sample was loaded from Alevin, Cell Ranger,
+#' STARsolo, AnnData, or a generic MTX triplet, this writes a canonical
+#' 10x-style artifact (readable by \code{Seurat::Read10X()}, Scanpy's
+#' \code{read_10x_mtx()}, etc.) so every run has a portable raw-counts
+#' snapshot, independent of the input format.
+#' @param cnts Matrix or sparse Matrix, genes x cells.
+#' @param out_dir Character. Directory to write into.
+#' @param format Character. "mtx" (MatrixMarket triplet, default) or "h5"
+#'   (10x-style HDF5). Both need the Bioconductor 'DropletUtils' package.
+#' @return Invisible out_dir, or NULL if DropletUtils isn't installed.
+#' @export
+export_raw_matrix <- function(cnts, out_dir, format = "mtx") {
+  if (!requireNamespace("DropletUtils", quietly = TRUE)) {
+    message("   [SKIP] export_raw_matrix: 'DropletUtils' not installed. ",
+            "Install with: BiocManager::install('DropletUtils')")
+    return(invisible(NULL))
+  }
+  make_dir(out_dir)
+  cnts <- methods::as(cnts, "CsparseMatrix")
+
+  safe_run({
+    DropletUtils::write10xCounts(
+      path        = out_dir,
+      x           = cnts,
+      barcodes    = colnames(cnts),
+      gene.id     = rownames(cnts),
+      gene.symbol = rownames(cnts),
+      type        = if (identical(format, "h5")) "HDF5" else "sparse",
+      version     = "3",
+      overwrite   = TRUE
+    )
+  }, label = paste0("export_raw_matrix -> ", out_dir))
+
+  message("   Raw matrix (", nrow(cnts), " genes x ", ncol(cnts),
+          " cells) saved to: ", out_dir, " [", format, "]")
+  invisible(out_dir)
+}
+
+#' Load count matrix from Alevin, Cell Ranger (MEX or HDF5), STARsolo,
+#' AnnData (.h5ad), or a generic MatrixMarket triplet
+#' @param folder_id Character
+#' @param data_path Character. Root data directory
+#' @param format Character or NULL. "auto" (default when NULL) inspects the
+#'   folder; or force one of "alevin", "10x", "10x_h5", "starsolo", "h5ad", "mtx".
+#' @param cfg Named list or NULL. Full pipeline config, used for
+#'   \code{input$format} / \code{input$starsolo_feature} / \code{input$h5ad_raw_slot}.
+#' @return Raw count matrix (genes x cells), tagged with a "quant_format" attribute
+#' @keywords internal
+.load_counts <- function(folder_id, data_path, format = NULL, cfg = NULL) {
+  sample_dir  <- file.path(data_path, folder_id)
+  alevin_path <- file.path(sample_dir, "alevin", "quants_mat.gz")
+  tenx_path   <- file.path(sample_dir, "outs", "filtered_feature_bc_matrix")
+
+  format <- format %||% cfg$input$format %||% "auto"
+  if (identical(format, "auto")) {
+    format <- .detect_quant_format(sample_dir)
+    if (is.na(format)) {
+      stop("No valid input found in: ", sample_dir,
+           "\n  Tried Alevin:      ", alevin_path,
+           "\n  Tried Cell Ranger: ", tenx_path,
+           "\n  Tried STARsolo:    ", file.path(sample_dir, "Solo.out"),
+           "\n  Tried .h5ad / .h5 / bare matrix.mtx directly under: ", sample_dir,
+           "\n  Set `input$format` in the config, or a `quant_format` column ",
+           "in the sample table, to specify the format explicitly.")
+    }
+  }
+
+  cnts <- switch(format,
+    "alevin" = {
+      message("   Input: Alevin  ", folder_id)
+      tximport::tximport(files = alevin_path, type = "alevin")$counts
+    },
+    "10x" = {
+      message("   Input: Cell Ranger (MEX)  ", folder_id)
+      Seurat::Read10X(data.dir = tenx_path)
+    },
+    "10x_h5" = {
+      h5_candidates <- c(
+        list.files(file.path(sample_dir, "outs"), pattern = "\\.h5$", full.names = TRUE),
+        list.files(sample_dir, pattern = "\\.h5$", full.names = TRUE)
+      )
+      if (length(h5_candidates) == 0L) stop("No .h5 file found for ", folder_id, " in ", sample_dir)
+      message("   Input: Cell Ranger (HDF5)  ", folder_id, " <- ", basename(h5_candidates[1L]))
+      Seurat::Read10X_h5(h5_candidates[1L])
+    },
+    "starsolo" = {
+      feature    <- cfg$input$starsolo_feature %||% "Gene"
+      candidates <- file.path(sample_dir, "Solo.out", feature, c("filtered", "raw"))
+      d          <- candidates[dir.exists(candidates)]
+      if (length(d) == 0L) stop("No Solo.out/", feature, "/{filtered,raw} found for ", folder_id)
+      message("   Input: STARsolo (", feature, ")  ", folder_id, " <- ", d[1L])
+      Seurat::Read10X(data.dir = d[1L], gene.column = 2L)
+    },
+    "h5ad" = {
+      h5ad_files <- list.files(sample_dir, pattern = "\\.h5ad$", full.names = TRUE)
+      if (length(h5ad_files) == 0L) stop("No .h5ad file found for ", folder_id, " in ", sample_dir)
+      message("   Input: AnnData (.h5ad)  ", folder_id, " <- ", basename(h5ad_files[1L]))
+      .load_h5ad_counts(h5ad_files[1L], raw_slot = cfg$input$h5ad_raw_slot %||% "auto")
+    },
+    "mtx" = {
+      message("   Input: generic MatrixMarket triplet  ", folder_id)
+      .load_generic_mtx(sample_dir)
+    },
+    stop("Unknown quant_format '", format, "' for sample '", folder_id,
+         "'. Supported: auto, alevin, 10x, 10x_h5, starsolo, h5ad, mtx.")
+  )
+
+  if (is.list(cnts)) cnts <- cnts[["Gene Expression"]] %||% cnts[[1L]]
+  attr(cnts, "quant_format") <- format
   cnts
 }
 
@@ -39,22 +254,36 @@
 #' @param max_mt_percent Numeric
 #' @param min_cells Integer
 #' @param cfg Named list. Full pipeline config
+#' @param raw_matrix_dir Character or NULL. If given and
+#'   \code{cfg$input$save_raw_matrix} is TRUE, the as-loaded (pre-QC) counts
+#'   matrix is exported here in standard 10x-style format via
+#'   \code{export_raw_matrix()}.
+#' @param quant_format Character or NULL. Per-sample override for the input
+#'   format (see \code{.load_counts()}); NULL defers to \code{cfg$input$format}.
 #' @return Seurat object or NULL
 #' @export
 process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
                                   data_path, gene_removal_pattern, mt_pattern,
                                   genes_to_remove, min_features, max_features,
-                                  max_counts, max_mt_percent, min_cells, cfg) {
+                                  max_counts, max_mt_percent, min_cells, cfg,
+                                  raw_matrix_dir = NULL, quant_format = NULL) {
   
   message("\n--- Processing Sample: ", file_prefix, " ---")
   make_dir(qc_dir)
 
-  cnts <- safe_run(.load_counts(folder_id, data_path),
+  cnts <- safe_run(.load_counts(folder_id, data_path, format = quant_format, cfg = cfg),
                    label = paste0("load_counts: ", folder_id))
   
   if (is.null(cnts)) {
     message(" [!] Error: Could not load counts for ", folder_id)
     return(NULL)
+  }
+
+  safe_run(.warn_if_noninteger_counts(cnts, folder_id), label = "integer-counts check")
+
+  if (isTRUE(cfg$input$save_raw_matrix) && !is.null(raw_matrix_dir)) {
+    export_raw_matrix(cnts, file.path(raw_matrix_dir, folder_id),
+                       format = cfg$input$raw_matrix_format %||% "mtx")
   }
 
   message(" -> Creating Seurat object...")
@@ -67,6 +296,7 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
 
   so$orig.ident      <- file_prefix
   so$condition       <- protocol
+  so$quant_format    <- attr(cnts, "quant_format") %||% quant_format %||% "auto"
   
   so[["percent.mt"]] <- Seurat::PercentageFeatureSet(so, pattern = mt_pattern)
 
