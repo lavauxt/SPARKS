@@ -18,7 +18,9 @@ process_single_sample(
   max_counts,
   max_mt_percent,
   min_cells,
-  cfg
+  cfg,
+  raw_matrix_dir = NULL,
+  quant_format = NULL
 )
 }
 \arguments{
@@ -47,6 +49,14 @@ process_single_sample(
 \item{min_cells}{Integer}
 
 \item{cfg}{Named list. Full pipeline config}
+
+\item{raw_matrix_dir}{Character or NULL. If given and
+\code{cfg$input$save_raw_matrix} is TRUE, the as-loaded (pre-QC) counts
+matrix is exported here in standard 10x-style format via
+\code{export_raw_matrix()}.}
+
+\item{quant_format}{Character or NULL. Per-sample override for the input
+format (see \code{.load_counts()}); NULL defers to \code{cfg$input$format}.}
 }
 \value{
 Seurat object or NULL

@@ -2,19 +2,27 @@
 % Please edit documentation in R/processing.R
 \name{.load_counts}
 \alias{.load_counts}
-\title{Load count matrix from Alevin or Cell Ranger output}
+\title{Load count matrix from Alevin, Cell Ranger (MEX or HDF5), STARsolo,
+AnnData (.h5ad), or a generic MatrixMarket triplet}
 \usage{
-.load_counts(folder_id, data_path)
+.load_counts(folder_id, data_path, format = NULL, cfg = NULL)
 }
 \arguments{
 \item{folder_id}{Character}
 
 \item{data_path}{Character. Root data directory}
+
+\item{format}{Character or NULL. "auto" (default when NULL) inspects the
+folder; or force one of "alevin", "10x", "10x_h5", "starsolo", "h5ad", "mtx".}
+
+\item{cfg}{Named list or NULL. Full pipeline config, used for
+\code{input$format} / \code{input$starsolo_feature} / \code{input$h5ad_raw_slot}.}
 }
 \value{
-Raw count matrix
+Raw count matrix (genes x cells), tagged with a "quant_format" attribute
 }
 \description{
-Load count matrix from Alevin or Cell Ranger output
+Load count matrix from Alevin, Cell Ranger (MEX or HDF5), STARsolo,
+AnnData (.h5ad), or a generic MatrixMarket triplet
 }
 \keyword{internal}
