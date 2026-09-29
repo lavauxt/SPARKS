@@ -262,10 +262,13 @@ save_pseudobulk_counts <- function(seurat_obj, output_dir, file_prefix,
 #' @param grouping_col Character
 #' @param output_dir Character
 #' @param file_prefix Character
+#' @param run_test Logical. If FALSE, the chi-squared test is skipped and only
+#'   the descriptive proportion table / bar plot are written.
 #' @return NULL
 #' @export
 run_proportion_analysis <- function(seurat_obj, grouping_col,
-                                     output_dir, file_prefix) {
+                                     output_dir, file_prefix,
+                                     run_test = TRUE) {
   if (!grouping_col %in% colnames(seurat_obj@meta.data)) return(invisible(NULL))
   if (!"condition"  %in% colnames(seurat_obj@meta.data)) return(invisible(NULL))
 
@@ -284,12 +287,14 @@ run_proportion_analysis <- function(seurat_obj, grouping_col,
     file.path(output_dir,
               paste0("Proportions_", file_prefix, "_", grouping_col, ".txt")))
 
-  chi <- safe_run(stats::chisq.test(tbl),
-                  label = paste0("chisq.test_", grouping_col))
-  if (!is.null(chi))
-    writeLines(capture.output(print(chi)),
-               file.path(output_dir,
-                         paste0("ChiSq_", file_prefix, "_", grouping_col, ".txt")))
+  if (isTRUE(run_test)) {
+    chi <- safe_run(stats::chisq.test(tbl),
+                    label = paste0("chisq.test_", grouping_col))
+    if (!is.null(chi))
+      writeLines(capture.output(print(chi)),
+                 file.path(output_dir,
+                           paste0("ChiSq_", file_prefix, "_", grouping_col, ".txt")))
+  }
 
   p <- ggplot2::ggplot(prop_df,
          ggplot2::aes(x = Condition, y = Freq,

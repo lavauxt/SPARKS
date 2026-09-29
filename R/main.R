@@ -28,6 +28,17 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     sample_metadata <- load_sample_table(cfg)
   }
 
+  if (isTRUE(cfg$pipeline$independent_samples)) {
+    message("   [INFO] pipeline$independent_samples = TRUE: every sample is analysed ",
+            "on its own (no merging, no between-sample comparison).")
+    sample_metadata$comparison_group <-
+      if (anyDuplicated(sample_metadata$folder_id) == 0L) {
+        sample_metadata$folder_id
+      } else {
+        paste(sample_metadata$comparison_group, sample_metadata$folder_id, sep = "_")
+      }
+  }
+
   cfg$sample_metadata <- sample_metadata
   make_dir(cfg$pipeline$results_dir)
 
@@ -362,6 +373,10 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   umap_w        <- if (is_fine) cfg$plot$umap_width_fine  else cfg$plot$umap_width_standard
   umap_h        <- if (is_fine) cfg$plot$umap_height_fine else cfg$plot$umap_height_standard
 
+  do_deg <- isTRUE(cfg$deg$run %||% TRUE)
+  if (!do_deg)
+    message("   [INFO] deg$run = FALSE: skipping between-condition DEG and statistics.")
+
   cond_vals <- unique(seurat_obj@meta.data[[cfg$processing$condition_col]])
   p_umap <- Seurat::DimPlot(seurat_obj,
     reduction = cfg$processing$reduction,
@@ -369,7 +384,8 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     label     = TRUE, repel = TRUE,
     split.by  = cfg$processing$condition_col) +
     ggplot2::ggtitle(paste0(file_prefix, " | ", group_col, " | ",
-                             paste(cond_vals, collapse = " vs "), " | ", suffix))
+                             paste(cond_vals, collapse = if (do_deg) " vs " else " / "),
+                             " | ", suffix))
 
   if (is_fine)
     p_umap <- p_umap +
@@ -386,36 +402,39 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   generate_violin_plots(seurat_obj, genes_list, dirs$VlnPlot, file_prefix,
                          group_by_col = group_col)
 
-  run_proportion_analysis(seurat_obj, group_col, dirs$DEG, file_prefix)
-  run_scproportion_test(seurat_obj,   group_col, dirs$DEG, file_prefix)
+  run_proportion_analysis(seurat_obj, group_col, dirs$DEG, file_prefix,
+                          run_test = do_deg)
+  if (do_deg) run_scproportion_test(seurat_obj, group_col, dirs$DEG, file_prefix)
 
-  all_markers <- run_deg_analysis(seurat_obj,
-    logfc_threshold     = cfg$deg$logfc_threshold,
-    min_pct             = cfg$deg$min_pct,
-    group_by_col        = group_col,
-    min_cells_per_group = cfg$deg$min_cells_per_group)
+  if (do_deg) {
+    all_markers <- run_deg_analysis(seurat_obj,
+      logfc_threshold     = cfg$deg$logfc_threshold,
+      min_pct             = cfg$deg$min_pct,
+      group_by_col        = group_col,
+      min_cells_per_group = cfg$deg$min_cells_per_group)
 
-  valid_groups <- get_valid_groups(seurat_obj@meta.data, group_col,
-                                   min_cells = cfg$deg$min_cells_per_group)
-  deg_counts   <- process_and_save_deg(all_markers, valid_groups,
-    dirs$DEG, file_prefix,
-    group_by_col    = group_col,
-    padj_threshold  = cfg$deg$min_p_val_adj,
-    table_sep       = cfg$deg$table_sep,
-    table_quote     = cfg$deg$table_quote,
-    table_row_names = cfg$deg$table_row_names)
+    valid_groups <- get_valid_groups(seurat_obj@meta.data, group_col,
+                                     min_cells = cfg$deg$min_cells_per_group)
+    deg_counts   <- process_and_save_deg(all_markers, valid_groups,
+      dirs$DEG, file_prefix,
+      group_by_col    = group_col,
+      padj_threshold  = cfg$deg$min_p_val_adj,
+      table_sep       = cfg$deg$table_sep,
+      table_quote     = cfg$deg$table_quote,
+      table_row_names = cfg$deg$table_row_names)
 
-  generate_deg_umap(seurat_obj, deg_counts, dirs$UMAP, file_prefix,
-    group_by_col    = group_col,
-    reduction       = cfg$processing$reduction,
-    color_high      = deg_color,
-    color_low       = cfg$plot$deg_umap_color_low,
-    min_deg_display = cfg$deg$min_deg_display,
-    point_size      = cfg$plot$deg_umap_point_size,
-    alpha           = cfg$plot$deg_umap_alpha,
-    label_size      = cfg$plot$deg_umap_label_size,
-    width           = cfg$plot$deg_umap_width,
-    height          = cfg$plot$deg_umap_height)
+    generate_deg_umap(seurat_obj, deg_counts, dirs$UMAP, file_prefix,
+      group_by_col    = group_col,
+      reduction       = cfg$processing$reduction,
+      color_high      = deg_color,
+      color_low       = cfg$plot$deg_umap_color_low,
+      min_deg_display = cfg$deg$min_deg_display,
+      point_size      = cfg$plot$deg_umap_point_size,
+      alpha           = cfg$plot$deg_umap_alpha,
+      label_size      = cfg$plot$deg_umap_label_size,
+      width           = cfg$plot$deg_umap_width,
+      height          = cfg$plot$deg_umap_height)
+  }
 
   for (layer in cfg$deg$avg_expression_layers) {
     save_average_expression(seurat_obj, dirs$DEG, file_prefix,

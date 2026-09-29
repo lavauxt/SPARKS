@@ -414,22 +414,29 @@ run_seurat_processing <- function(seurat_obj,
   seurat_obj[["RNA"]] <- SeuratObject::JoinLayers(seurat_obj[["RNA"]])
   seurat_obj[["SCT"]] <- SeuratObject::JoinLayers(seurat_obj[["SCT"]])
 
-  message("   [Integration] Running direct Harmony integration...")
-  if (!requireNamespace("harmony", quietly = TRUE)) {
-    stop("The 'harmony' package is missing. Please run: install.packages('harmony')")
-  }
-  
-  seurat_obj <- harmony::RunHarmony(
-    object         = seurat_obj,
-    group.by.vars  = split_by,         
-    reduction.use  = "pca",            
-    reduction.save = "integrated.dr",
-    verbose        = FALSE
-  )
+  n_batches <- length(unique(stats::na.omit(as.character(seurat_obj@meta.data[[split_by]]))))
+  if (n_batches >= 2L) {
+    message("   [Integration] Running direct Harmony integration (", n_batches, " batches)...")
+    if (!requireNamespace("harmony", quietly = TRUE)) {
+      stop("The 'harmony' package is missing. Please run: install.packages('harmony')")
+    }
 
-  message("   [Clustering] Running UMAP and FindNeighbors on integrated.dr...")
-  seurat_obj <- Seurat::RunUMAP(seurat_obj, reduction = "integrated.dr", dims = actual_dims, verbose = FALSE)
-  seurat_obj <- Seurat::FindNeighbors(seurat_obj, reduction = "integrated.dr", dims = actual_dims, verbose = FALSE)
+    seurat_obj <- harmony::RunHarmony(
+      object         = seurat_obj,
+      group.by.vars  = split_by,
+      reduction.use  = "pca",
+      reduction.save = "integrated.dr",
+      verbose        = FALSE
+    )
+    cluster_red <- "integrated.dr"
+  } else {
+    message("   [Integration] Single '", split_by, "' value: skipping Harmony, using PCA.")
+    cluster_red <- "pca"
+  }
+
+  message("   [Clustering] Running UMAP and FindNeighbors on ", cluster_red, "...")
+  seurat_obj <- Seurat::RunUMAP(seurat_obj, reduction = cluster_red, dims = actual_dims, verbose = FALSE)
+  seurat_obj <- Seurat::FindNeighbors(seurat_obj, reduction = cluster_red, dims = actual_dims, verbose = FALSE)
   seurat_obj <- Seurat::FindClusters(seurat_obj, resolution = resolution, verbose = FALSE)
   
   return(seurat_obj)

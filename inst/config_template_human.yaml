@@ -7,6 +7,13 @@ pipeline:
 # ── Sample table (TSV: folder_id, protocol, comparison_group[, quant_format]) ──
   sample_table: "./sample_table.tsv"
 
+  # false (default): samples sharing a comparison_group are merged, integrated
+  #                  (Harmony) and clustered together.
+  # true : every row of the sample table is analysed fully on its own (own
+  #        clustering, UMAP, SingleR, subsets, output folder results_dir/<folder_id>/).
+  #        No between-sample comparison is possible in this mode.
+  independent_samples: false
+
 # ── Input data ─────────────────────────────────────────────────────────────────
 # format: how each sample folder under data_dir is read. "auto" inspects the
 # folder; override globally here, or per-sample via an optional quant_format
@@ -68,6 +75,10 @@ processing:
 
 # ── DEG ────────────────────────────────────────────────────────────────────────
 deg:
+  # false -> no between-condition comparison: no DEG tables / DEG-count UMAP,
+  # no chi-squared, no scProportionTest. Samples stay merged and share clusters.
+  # Cluster markers, annotation and descriptive plots are still produced.
+  run:                 true
   logfc_threshold:     0.25
   min_pct:             0.1
   min_cells_per_group: 10

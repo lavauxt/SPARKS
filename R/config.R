@@ -21,7 +21,12 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   }
 
 
-  cfg$pipeline$config_dir <- dirname(normalizePath(base_config_path))
+  cfg$pipeline$config_dir <- dirname(normalizePath(base_config_path, mustWork = FALSE))
+  if (!is.null(override_config_path) && file.exists(override_config_path)) {
+    cfg$pipeline$override_config_dir <- dirname(
+      normalizePath(override_config_path, mustWork = FALSE)
+    )
+  }
 
 
   required <- c("pipeline", "qc", "processing", "deg", "plot",
@@ -29,6 +34,11 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   missing  <- setdiff(required, names(cfg))
   if (length(missing) > 0L)
     stop("Config missing required keys: ", paste(missing, collapse = ", "))
+
+  # pipeline$independent_samples: TRUE analyses every row of the sample table
+  # on its own (own normalisation, clustering, UMAP, annotation, output folder)
+  # instead of merging the samples of a comparison_group.
+  cfg$pipeline$independent_samples <- cfg$pipeline$independent_samples %||% FALSE
 
   cfg$processing$cluster_col        <- cfg$processing$cluster_col        %||% "seurat_clusters"
   cfg$processing$condition_col      <- cfg$processing$condition_col      %||% "condition"
@@ -71,6 +81,10 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$qc$max_mt_percent <- cfg$qc$max_mt_percent %||% 10
   cfg$qc$min_cells      <- cfg$qc$min_cells      %||% 3L
 
+  # deg$run: FALSE disables every between-condition comparison (DEG tables,
+  # DEG-count UMAP, chi-squared / scProportionTest). Clustering, annotation,
+  # cluster markers and descriptive plots are unaffected.
+  cfg$deg$run                   <- cfg$deg$run                   %||% TRUE
   cfg$deg$logfc_threshold       <- cfg$deg$logfc_threshold       %||% 0.25
   cfg$deg$min_pct               <- cfg$deg$min_pct               %||% 0.1
   cfg$deg$min_p_val_adj         <- cfg$deg$min_p_val_adj         %||% 0.05
@@ -163,8 +177,29 @@ load_sample_table <- function(cfg) {
     stop("pipeline$sample_table is missing from the configuration.")
   }
 
-  if (is.character(st) && length(st) == 1L && file.exists(st)) {
-    df <- utils::read.delim(st, sep = "\t", stringsAsFactors = FALSE, check.names = FALSE)
+  if (is.character(st) && length(st) == 1L) {
+    sample_table_path <- st
+    if (!file.exists(sample_table_path)) {
+      candidate_paths <- file.path(
+        unique(c(
+          cfg$pipeline$override_config_dir,
+          cfg$pipeline$config_dir
+        )),
+        sample_table_path
+      )
+      sample_table_path <- candidate_paths[file.exists(candidate_paths)][1L]
+    }
+
+    if (!is.na(sample_table_path) && file.exists(sample_table_path)) {
+      df <- utils::read.delim(
+        sample_table_path,
+        sep = "\t",
+        stringsAsFactors = FALSE,
+        check.names = FALSE
+      )
+    } else {
+      stop("pipeline$sample_table must be a valid file path or a YAML list.")
+    }
   } else if (is.list(st)) {
     df <- do.call(dplyr::bind_rows, lapply(st, as.data.frame, stringsAsFactors = FALSE))
   } else {

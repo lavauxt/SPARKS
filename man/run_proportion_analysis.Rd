@@ -4,7 +4,13 @@
 \alias{run_proportion_analysis}
 \title{Compute cell type proportion table and chi squared test}
 \usage{
-run_proportion_analysis(seurat_obj, grouping_col, output_dir, file_prefix)
+run_proportion_analysis(
+  seurat_obj,
+  grouping_col,
+  output_dir,
+  file_prefix,
+  run_test = TRUE
+)
 }
 \arguments{
 \item{seurat_obj}{Seurat object}
@@ -14,6 +20,9 @@ run_proportion_analysis(seurat_obj, grouping_col, output_dir, file_prefix)
 \item{output_dir}{Character}
 
 \item{file_prefix}{Character}
+
+\item{run_test}{Logical. If FALSE, the chi-squared test is skipped and only
+the descriptive proportion table / bar plot are written.}
 }
 \description{
 Compute cell type proportion table and chi squared test
