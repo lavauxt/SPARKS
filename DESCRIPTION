@@ -46,7 +46,9 @@ Imports:
     ggrepel,
     tidyr,
     stringr,
-    harmony
+    harmony,
+    eds,
+    glmGamPoi
 Suggests:
     rmarkdown,
     knitr,
