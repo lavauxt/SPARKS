@@ -180,13 +180,31 @@ load_sample_table <- function(cfg) {
   if (is.character(st) && length(st) == 1L) {
     sample_table_path <- st
     if (!file.exists(sample_table_path)) {
-      candidate_paths <- file.path(
-        unique(c(
-          cfg$pipeline$override_config_dir,
-          cfg$pipeline$config_dir
-        )),
-        sample_table_path
+      config_dirs <- c(
+        cfg$pipeline$override_config_dir %||% character(0),
+        cfg$pipeline$config_dir %||% character(0)
       )
+      config_dirs <- config_dirs[
+        vapply(config_dirs, is.character, logical(1)) &
+          nzchar(config_dirs)
+      ]
+      ancestor_dirs <- function(paths) {
+        paths <- paths[!is.na(paths) & nzchar(paths)]
+        ancestors <- character(0)
+        for (path in paths) {
+          current <- normalizePath(path, winslash = "/", mustWork = FALSE)
+          repeat {
+            ancestors <- c(ancestors, current)
+            parent <- dirname(current)
+            if (identical(parent, current)) break
+            current <- parent
+          }
+        }
+        unique(ancestors)
+      }
+
+      candidate_dirs <- ancestor_dirs(config_dirs)
+      candidate_paths <- file.path(candidate_dirs, sample_table_path)
       sample_table_path <- candidate_paths[file.exists(candidate_paths)][1L]
     }
 

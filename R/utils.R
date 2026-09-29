@@ -36,7 +36,6 @@ safe_run <- function(expr, label = "Task", fallback = NULL) {
 #' Sanitize string for filenames
 #' @param x Character vector
 #' @return Sanitized character vector
-#' @export
 .safe_filename <- function(x) {
   gsub("[^A-Za-z0-9_.-]", "_", x)
 }
@@ -115,7 +114,6 @@ get_avg_expr <- function(seurat_obj, layer = "data") {
 #' @param seurat_obj Seurat object
 #' @param context Character for logging
 #' @return Character vector of available genes, or NULL
-#' @export
 .filter_present_genes <- function(genes, seurat_obj, context = "") {
   if (is.null(genes) || length(genes) == 0L) return(NULL)
   valid <- intersect(as.character(genes), rownames(seurat_obj))
@@ -151,7 +149,6 @@ get_junk_pattern <- function(species = "Mouse") {
 #' @param min_pct Numeric
 #' @param logfc_threshold Numeric
 #' @return Data frame of markers or NULL
-#' @export
 .find_all_markers_safe <- function(seurat_obj, only_pos = TRUE, min_pct = 0.25, logfc_threshold = 0.25) {
   safe_run(
     Seurat::FindAllMarkers(seurat_obj, only.pos = only_pos, min.pct = min_pct,
@@ -164,7 +161,6 @@ get_junk_pattern <- function(species = "Mouse") {
 #' @param seurat_obj Seurat object
 #' @param reduction Character
 #' @return Logical
-#' @export
 .has_reduction <- function(seurat_obj, reduction) {
   !is.null(seurat_obj@reductions[[reduction]])
 }
@@ -172,7 +168,6 @@ get_junk_pattern <- function(species = "Mouse") {
 #' Check if object has scaled data
 #' @param seurat_obj Seurat object
 #' @return Logical
-#' @export
 .has_scale_data <- function(seurat_obj) {
   assay <- Seurat::DefaultAssay(seurat_obj)
   has_data <- tryCatch({
@@ -189,7 +184,6 @@ get_junk_pattern <- function(species = "Mouse") {
 #' toward vertical and shrinks the font as the group count grows.
 #' @param n Integer. Number of distinct groups/columns being labeled
 #' @return Named list: angle, hjust, size
-#' @export
 .heatmap_label_params <- function(n) {
   if (n > 20) {
     list(angle = 90, hjust = 0, size = 2.5)
