@@ -215,22 +215,54 @@ save_average_expression <- function(seurat_obj, output_dir, file_prefix,
 #' @param file_prefix Character
 #' @param group_by_col Character
 #' @param table_sep Character
-#' @param min_replicates Integer. Minimum unique samples required for pseudobulking
+#' @param min_replicates Integer. Minimum unique samples (over the whole object)
+#'   required for pseudobulking
+#' @param condition_col Character. Metadata column holding the condition. Used to
+#'   check that every sample belongs to exactly one condition and to warn when a
+#'   condition has a single sample. Ignored if the column is absent.
 #' @return NULL
 #' @export
 save_pseudobulk_counts <- function(seurat_obj, output_dir, file_prefix,
                                     group_by_col = "seurat_clusters",
                                     table_sep    = "\t",
-                                    min_replicates = 3L) {
+                                    min_replicates = 3L,
+                                    condition_col  = "condition") {
   if (!group_by_col %in% colnames(seurat_obj@meta.data)) return(invisible(NULL))
   
   sample_col <- if ("sample" %in% colnames(seurat_obj@meta.data)) "sample" else if ("orig.ident" %in% colnames(seurat_obj@meta.data)) "orig.ident" else NULL
   if (is.null(sample_col)) return(invisible(NULL))
 
-  n_reps <- length(unique(seurat_obj@meta.data[[sample_col]]))
+  n_reps <- length(unique(stats::na.omit(seurat_obj@meta.data[[sample_col]])))
   if (n_reps < min_replicates) {
     message("   [SKIP] Pseudobulk: found ", n_reps, " replicates, requires at least ", min_replicates)
     return(invisible(NULL))
+  }
+
+  # The sample/condition structure was never validated: the check above only
+  # counts samples over the whole object. Make sure the aggregation is
+  # well-defined and flag designs that cannot support replicate-based DE.
+  if (condition_col %in% colnames(seurat_obj@meta.data)) {
+    sc <- unique(data.frame(
+      sample    = as.character(seurat_obj@meta.data[[sample_col]]),
+      condition = as.character(seurat_obj@meta.data[[condition_col]]),
+      stringsAsFactors = FALSE
+    ))
+    sc <- sc[!is.na(sc$sample) & !is.na(sc$condition), , drop = FALSE]
+
+    multi <- unique(sc$sample[duplicated(sc$sample)])
+    if (length(multi) > 0L) {
+      message("   [SKIP] Pseudobulk: sample(s) ", paste(multi, collapse = ", "),
+              " span more than one '", condition_col, "' -- a pseudobulk column ",
+              "would mix conditions.")
+      return(invisible(NULL))
+    }
+
+    reps_per_cond <- table(sc$condition)
+    if (any(reps_per_cond < 2L)) {
+      message("   [WARNING] Pseudobulk: condition(s) with a single sample (",
+              paste(names(reps_per_cond)[reps_per_cond < 2L], collapse = ", "),
+              ") -- the table is written but cannot support a replicate-based comparison.")
+    }
   }
 
   seurat_obj$pseudobulk_group <- paste(seurat_obj@meta.data[[group_by_col]],
@@ -291,7 +323,7 @@ run_proportion_analysis <- function(seurat_obj, grouping_col,
     chi <- safe_run(stats::chisq.test(tbl),
                     label = paste0("chisq.test_", grouping_col))
     if (!is.null(chi))
-      writeLines(capture.output(print(chi)),
+      writeLines(utils::capture.output(print(chi)),
                  file.path(output_dir,
                            paste0("ChiSq_", file_prefix, "_", grouping_col, ".txt")))
   }
@@ -364,7 +396,7 @@ prop_test_result <- tryCatch({
     )
 
     if (is.data.frame(prop_test_result)) {
-      write.table(
+      utils::write.table(
         prop_test_result,
         file = out_file,
         sep = "\t",
@@ -395,6 +427,10 @@ prop_test_result <- tryCatch({
 #' @param method Character. Correlation method to use ("pearson" or "spearman").
 #' @param global_plot Logical. If TRUE, generate an overall correlation heatmap
 #'   using all cells (ignoring grouping_col and cond_col). Default TRUE.
+#' @param assay Character. Assay whose log-normalised \code{data} layer is
+#'   correlated. Default \code{"RNA"} (what \code{run_grouping_analysis()} passes);
+#'   if the assay has no \code{data} layer it is created with
+#'   \code{NormalizeData()}.
 #'
 #' @return NULL (invisibly). Writes heatmaps and correlation tables to disk.
 #'
@@ -409,7 +445,7 @@ run_gene_correlations <- function(seurat_obj,
                                   cond_col = "condition",
                                   method = "pearson",
                                   global_plot = TRUE,
-                                  assay = "SCT") {
+                                  assay = "RNA") {
 
   message("--- Starting gene correlation analysis (Grouping: ", grouping_col, ") ---")
   message("   Using assay: ", assay)
@@ -430,8 +466,8 @@ run_gene_correlations <- function(seurat_obj,
   )
   if (!"data" %in% available_layers) {
     if ("counts" %in% available_layers) {
-      message("   [INFO] 'data' layer absent in '", assay, "' assay after SCTransform. ",
-              "Re-running NormalizeData to restore log-normalised values.")
+      message("   [INFO] 'data' layer absent in '", assay, "' assay. ",
+              "Running NormalizeData to create log-normalised values.")
       seurat_obj <- Seurat::NormalizeData(seurat_obj, assay = assay, verbose = FALSE)
     } else {
       message("   [SKIP Correlation] No usable layers found in '", assay, "' assay.")
@@ -477,7 +513,7 @@ run_gene_correlations <- function(seurat_obj,
     all_cells <- colnames(expr)
     mat_x_all <- t(as.matrix(expr[valid_genes_x, all_cells, drop = FALSE]))
     mat_y_all <- t(as.matrix(expr[valid_genes_y, all_cells, drop = FALSE]))
-    cor_global <- suppressWarnings(cor(mat_x_all, mat_y_all, method = method))
+    cor_global <- suppressWarnings(stats::cor(mat_x_all, mat_y_all, method = method))
     cor_global[is.na(cor_global)] <- 0
     cor_global_df <- as.data.frame(as.table(cor_global))
     colnames(cor_global_df) <- c("Gene_X", "Gene_Y", "Correlation")
@@ -485,7 +521,7 @@ run_gene_correlations <- function(seurat_obj,
     cor_global_df$Type <- "Global"
     
     global_tsv <- file.path(corr_dir, paste0("Correlations_", method, "_", prefix, "_global.tsv"))
-    write.table(cor_global_df, global_tsv, sep = "\t", quote = FALSE, row.names = FALSE)
+    utils::write.table(cor_global_df, global_tsv, sep = "\t", quote = FALSE, row.names = FALSE)
     message("   -> Global correlation table saved: ", basename(global_tsv))
     
     tryCatch({
@@ -539,10 +575,11 @@ run_gene_correlations <- function(seurat_obj,
   for (grp in groups) {
     for (cond in conditions) {
       
-      cells <- rownames(seurat_obj@meta.data[
-        seurat_obj@meta.data[[grouping_col]] == grp &
-        seurat_obj@meta.data[[cond_col]] == cond, 
-      ])
+      # which(): an NA in either column must drop the cell, not turn into an
+      # "NA" row name that makes expr[, cells] fail with "subscript out of bounds".
+      meta_gc <- seurat_obj@meta.data
+      cells   <- rownames(meta_gc)[which(meta_gc[[grouping_col]] == grp &
+                                         meta_gc[[cond_col]]     == cond)]
 
       n_cells <- length(cells)
       grp_cond_label <- paste0(grp, "_", cond)
@@ -551,7 +588,7 @@ run_gene_correlations <- function(seurat_obj,
         message(paste("Processing Cluster:", grp, "| Cond:", cond, "| n:", n_cells))
         mat_x <- t(as.matrix(expr[valid_genes_x, cells, drop = FALSE]))
         mat_y <- t(as.matrix(expr[valid_genes_y, cells, drop = FALSE]))
-        cor_res <- suppressWarnings(cor(mat_x, mat_y, method = method))
+        cor_res <- suppressWarnings(stats::cor(mat_x, mat_y, method = method))
         cor_res[is.na(cor_res)] <- 0
         cor_df <- as.data.frame(as.table(cor_res))
         colnames(cor_df) <- c("Gene_X", "Gene_Y", "Correlation")
@@ -614,7 +651,7 @@ run_gene_correlations <- function(seurat_obj,
   if (length(all_cors) > 0) {
     final_df <- do.call(rbind, all_cors)
     tsv_file <- file.path(corr_dir, paste0("Correlations_", method, "_", prefix, "_by_group.tsv"))
-    write.table(final_df, tsv_file, sep = "\t", quote = FALSE, row.names = FALSE)
+    utils::write.table(final_df, tsv_file, sep = "\t", quote = FALSE, row.names = FALSE)
     message("--- Per-group correlation table saved to: ", basename(tsv_file), " ---")
   } else {
     message("--- No groups met the cell count threshold (N >= 30). ---")

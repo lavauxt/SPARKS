@@ -1,4 +1,12 @@
 #' Null coalescing operator
+#'
+#' Returns \code{rhs} when \code{lhs} is \code{NULL} \emph{or has length zero}
+#' (\code{character(0)}, \code{list()}, ... -- an empty YAML sequence \code{[]}
+#' parses to \code{list()}). This is deliberately broader than \code{\%||\%} in
+#' base R (>= 4.4.0), rlang and SeuratObject, which only test for \code{NULL}:
+#' the pipeline relies on it so that an empty list in a config file falls back
+#' to the default. Keep the difference in mind if you attach SPARKS together
+#' with one of those packages.
 #' @name %||%
 #' @param lhs Left hand side
 #' @param rhs Right hand side
@@ -51,8 +59,11 @@ safe_run <- function(expr, label = "Task", fallback = NULL) {
 save_png <- function(p, filename, width = 8, height = 6, dpi = 300) {
   if (inherits(p, "gtable") || inherits(p, "Heatmap")) {
     grDevices::png(filename, width = width, height = height, units = "in", res = dpi)
+    # Close *this* device even if grid.draw() errors. Otherwise every failed
+    # draw leaks an open png device (R allows 63) that later plots draw into.
+    dev_id <- grDevices::dev.cur()
+    on.exit(grDevices::dev.off(dev_id), add = TRUE)
     grid::grid.draw(p)
-    grDevices::dev.off()
   } else {
     suppressMessages(
       ggplot2::ggsave(filename, plot = p, width = width, height = height, dpi = dpi, bg = "white")
@@ -233,6 +244,19 @@ get_junk_pattern <- function(species = "Mouse") {
   SeuratObject::JoinLayers(obj)
 }
 
+#' Environment in which the report templates are evaluated
+#'
+#' A child of the global environment (so the Rmd sees whatever the user has
+#' attached) that also carries SPARKS's own \code{\%||\%}: the operator is
+#' exported but is not on the search path when the package is only loaded
+#' (\code{SPARKS::sparks()}), and base R only provides it from 4.4.0.
+#' @return A new environment
+.report_env <- function() {
+  env <- new.env(parent = globalenv())
+  assign("%||%", `%||%`, envir = env)
+  env
+}
+
 #' Generate an HTML QC report for a processed Seurat object
 #'
 #' The report is always written to \code{out_dir} (the group's QC folder).
@@ -281,7 +305,7 @@ generate_qc_report <- function(seurat_obj, comp_group, out_dir,
       out_dir    = normalizePath(out_dir, mustWork = FALSE),
       cfg        = cfg
     ),
-    envir = new.env(parent = globalenv()),
+    envir = .report_env(),
     quiet = FALSE
   )
 
@@ -343,7 +367,7 @@ generate_results_report <- function(seurat_obj, comp_group, out_dir,
       cfg        = cfg,
       groupings  = groupings
     ),
-    envir = new.env(parent = globalenv()),
+    envir = .report_env(),
     quiet = FALSE
   )
 

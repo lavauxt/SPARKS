@@ -210,7 +210,7 @@ generate_cluster_markers_and_heatmap <- function(seurat_obj, group_by_col,
 
   top_genes <- markers |>
     (\(df) split(df, df$cluster))() |>
-    lapply(function(x) head(x[order(x$avg_log2FC, decreasing = TRUE), "gene"], top_n)) |>
+    lapply(function(x) utils::head(x[order(x$avg_log2FC, decreasing = TRUE), "gene"], top_n)) |>
     unlist() |>
     unique()
 
@@ -650,7 +650,7 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
       ) +
       ggplot2::guides(
         colour = ggplot2::guide_colorbar(title = "Avg Expression", 
-                                         barheight = unit(4, "cm")),
+                                         barheight = grid::unit(4, "cm")),
         size   = ggplot2::guide_legend(title = "Percent Expressed")
       ) +
       ggplot2::theme(

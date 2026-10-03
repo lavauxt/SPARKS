@@ -6,6 +6,12 @@
 sparks <- function(base_config_path, override_config_path = NULL, sample_metadata = NULL) {
   cfg <- load_pipeline_config(base_config_path, override_config_path)
 
+  if (!requireNamespace("presto", quietly = TRUE)) {
+    message("   [INFO] Optional package 'presto' not installed: Seurat's FindMarkers() / ",
+            "FindAllMarkers() fall back to a much slower Wilcoxon test.",
+            "\n          Install it with: devtools::install_github('immunogenomics/presto')")
+  }
+
   if (isTRUE(cfg$parallel$enable)) {
     if (!requireNamespace("future", quietly = TRUE)) {
       stop("The 'future' package is required for parallelization. Please run: install.packages('future')")
@@ -51,12 +57,16 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     dirs       <- .setup_group_dirs(cfg$pipeline$results_dir, comp_group)
 
     protocol_objects <- lapply(seq_len(nrow(group_meta)), function(i) {
-      qf <- if ("quant_format" %in% colnames(group_meta) &&
-                nzchar(group_meta$quant_format[i] %||% "")) {
-        group_meta$quant_format[i]
+      # BUG FIX: an entirely blank quant_format column is read as logical NA,
+      # and nzchar(NA_character_) is TRUE -- so NA used to be passed on as the
+      # format and every sample failed with "Unknown quant_format 'NA'". A blank
+      # (or NA) cell must mean "use input$format".
+      qf_cell <- if ("quant_format" %in% colnames(group_meta)) {
+        trimws(as.character(group_meta$quant_format[i]))
       } else {
-        NULL
+        NA_character_
       }
+      qf <- if (!is.na(qf_cell) && nzchar(qf_cell)) qf_cell else NULL
       safe_run(
         process_single_sample(
           folder_id            = group_meta$folder_id[i],
@@ -158,7 +168,8 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       resolution      = cfg$processing$cluster_resolution,
       npcs            = cfg$processing$npcs,
       vars_to_regress = regress_vars,
-      split_by        = "orig.ident"
+      split_by        = "orig.ident",
+      prep_sct_findmarkers = isTRUE(cfg$processing$prep_sct_findmarkers)
     )
 
     save_png(
@@ -209,7 +220,10 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
                 "\n            or reinstall SPARKS so inst/rmd/qc_report.Rmd ships",
                 "\n            with the package.")
       } else {
-        generate_qc_report(
+        # A failing report (e.g. a missing optional package) must not abort the
+        # whole run -- the results report used to take the pipeline down *before*
+        # the merged object was saved.
+        safe_run(generate_qc_report(
           seurat_obj   = merged_obj,
           comp_group   = comp_group,
           out_dir      = dirs$qc,          
@@ -217,7 +231,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
           title        = cfg$report$title  %||% paste("QC Report -", comp_group),
           rmd_template = template_path,
           cfg          = cfg
-        )
+        ), label = "QC report")
       }
     } else {
       message("   [SKIP] rmarkdown not installed – QC report not generated.")
@@ -269,7 +283,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
                 "\n            or reinstall SPARKS so inst/rmd/results_report.Rmd ships",
                 "\n            with the package.")
       } else {
-        generate_results_report(
+        safe_run(generate_results_report(
           seurat_obj   = merged_obj,
           comp_group   = comp_group,
           out_dir      = dirs$base,          
@@ -278,7 +292,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
           title        = cfg$report$title  %||% paste("Results Report -", comp_group),
           rmd_template = results_template_path,
           cfg          = cfg
-        )
+        ), label = "Results report")
       }
     }
 
@@ -286,10 +300,10 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     rm(merged_obj); gc()
   }
 
-  writeLines(capture.output(utils::sessionInfo()),
+  writeLines(utils::capture.output(utils::sessionInfo()),
              file.path(cfg$pipeline$results_dir, "session_info.txt"))
 
-  w <- capture.output(warnings())
+  w <- utils::capture.output(warnings())
   if (length(w) > 0L && !all(grepl("no warnings", w, ignore.case = TRUE))) {
     writeLines(w, file.path(cfg$pipeline$results_dir, "warnings.txt"))
     message("Pipeline finished with warnings. See warnings.txt")
@@ -320,14 +334,22 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
 
   Seurat::DefaultAssay(seurat_obj) <- "SCT"
 
-  if (inherits(seurat_obj[["SCT"]], "Assay5")) {
-    message("   [INFO] Assay5 detected. Skipping PrepSCTFindMarkers (not required).")
-  } else {
+  # run_seurat_processing() runs PrepSCTFindMarkers() right after SCTransform and
+  # only then converts SCT to an Assay5. An Assay5 carries no SCT models, so Prep
+  # can no longer run on it -- that is the only reason to skip it here (it used
+  # to be skipped for *every* object, so it never ran at all).
+  # An object that still holds an SCTAssay (an RDS from an older run, or one
+  # built outside run_seurat_processing()) is prepared here instead; this is a
+  # no-op when only one SCT model is stored.
+  if (inherits(seurat_obj[["SCT"]], "SCTAssay")) {
     seurat_obj <- safe_run(
       Seurat::PrepSCTFindMarkers(seurat_obj, verbose = TRUE),
       label    = "PrepSCTFindMarkers",
       fallback = seurat_obj
     )
+  } else {
+    message("   [INFO] SCT assay has no SCT models (Assay5): PrepSCTFindMarkers cannot run here; ",
+            "it is applied in run_seurat_processing() (processing$prep_sct_findmarkers).")
   }
 
   for (grp in valid_groupings) {
@@ -446,8 +468,9 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   }
 
   save_pseudobulk_counts(seurat_obj, dirs$DEG, file_prefix,
-                         group_by_col = group_col,
-                         table_sep    = cfg$deg$table_sep)
+                         group_by_col  = group_col,
+                         table_sep     = cfg$deg$table_sep,
+                         condition_col = cfg$processing$condition_col)
 
   generate_cluster_markers_and_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix)
 
@@ -583,7 +606,8 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     dims_pca   = pca_dims_sub,
     resolution = cfg$processing$cluster_resolution,
     npcs       = cfg$processing$npcs,
-    split_by   = "orig.ident")
+    split_by   = "orig.ident",
+    prep_sct_findmarkers = isTRUE(cfg$processing$prep_sct_findmarkers))
 
   singler_names <- cfg$singler$label_names[
     cfg$singler$label_names %in% colnames(sub_obj@meta.data)]
@@ -602,17 +626,21 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     groupings <- unique(c(cfg$processing$cluster_col, singler_names))
   }
 
+  # `genes: ~` (or no `genes` key) falls back to genes$genes_to_plot, as the
+  # config templates document -- the code used to pass NULL through instead.
+  sub_genes <- subset_cfg$genes %||% cfg$genes$genes_to_plot
+
   run_analysis_unit(seurat_obj = sub_obj, display_name = subset_cfg$display_name,
-                    groupings  = groupings, genes_list = subset_cfg$genes,
+                    groupings  = groupings, genes_list = sub_genes,
                     base_dir   = base_dir, suffix = suffix,
                     deg_color  = subset_cfg$deg_color, cfg = cfg)
 
-  if (!is.null(subset_cfg$genes) && length(subset_cfg$genes) > 0) {
+  if (length(sub_genes) > 0) {
     message("   --> Generating Subcluster Heatmaps for: ", subset_cfg$display_name)
     hm_dir <- file.path(base_dir, suffix, subset_cfg$display_name, "Heatmap")
     generate_subcluster_heatmaps(
       seurat_obj = sub_obj,
-      genes      = subset_cfg$genes,
+      genes      = sub_genes,
       out_dir    = hm_dir,
       prefix     = subset_cfg$display_name
     )

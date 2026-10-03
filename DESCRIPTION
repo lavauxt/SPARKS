@@ -17,6 +17,8 @@ Collate:
     'qc_utils.R'
     'sex_scoring.R'
     'visualization.R'
+Depends:
+    R (>= 4.1.0)
 Imports:
     Seurat (>= 5.0.0),
     SeuratObject (>= 5.0.0),
@@ -55,9 +57,11 @@ Suggests:
     DT,
     plotly,
     htmltools,
-    RColorBrewer
+    RColorBrewer,
+    presto
 Remotes:
     rpolicastro/scProportionTest,
-    BorchLab/escape
+    BorchLab/escape,
+    immunogenomics/presto
 VignetteBuilder: knitr
 Config/roxygen2/version: 8.1.0

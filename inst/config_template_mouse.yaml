@@ -58,6 +58,7 @@ cell_cycle:
 # ── QC ─────────────────────────────────────────────────────────────────────────
 qc:
   min_features:   200
+  max_features:   6000   # cells with >= this many detected genes are dropped (built-in default 6000)
   max_counts:     30000
   max_mt_percent: 10
   min_cells:      3     # CreateSeuratObject min.cells
@@ -71,8 +72,12 @@ processing:
   cluster_resolution: 0.5
   n_elbow_dims:       50
   cluster_col:        "seurat_clusters"
-  condition_col:      "condition"
+  condition_col:      "condition"   # must stay "condition" (the pipeline stores it there)
   reduction:          "umap"
+  # true (default): after SCTransform, run Seurat's PrepSCTFindMarkers() so the SCT
+  # counts/data of all samples share one sequencing depth (needed for between-sample
+  # DEG / average expression). Set false to skip it (faster, less memory).
+  prep_sct_findmarkers: true
 
 # ── DEG ────────────────────────────────────────────────────────────────────────
 deg:

@@ -148,21 +148,31 @@ export_raw_matrix <- function(cnts, out_dir, format = "mtx") {
   make_dir(out_dir)
   cnts <- methods::as(cnts, "CsparseMatrix")
 
-  safe_run({
+  # write10xCounts() needs a *directory* for the MTX triplet but a *file* path
+  # for HDF5. Passing the (already created) directory with type = "HDF5" made it
+  # delete the directory and leave an extension-less file named after the
+  # sample in its place, instead of <out_dir>/raw_feature_bc_matrix.h5.
+  is_h5    <- identical(format, "h5")
+  out_path <- if (is_h5) file.path(out_dir, "raw_feature_bc_matrix.h5") else out_dir
+
+  ok <- safe_run({
     DropletUtils::write10xCounts(
-      path        = out_dir,
+      path        = out_path,
       x           = cnts,
       barcodes    = colnames(cnts),
       gene.id     = rownames(cnts),
       gene.symbol = rownames(cnts),
-      type        = if (identical(format, "h5")) "HDF5" else "sparse",
+      type        = if (is_h5) "HDF5" else "sparse",
       version     = "3",
       overwrite   = TRUE
     )
-  }, label = paste0("export_raw_matrix -> ", out_dir))
+    TRUE
+  }, label = paste0("export_raw_matrix -> ", out_dir), fallback = FALSE)
 
-  message("   Raw matrix (", nrow(cnts), " genes x ", ncol(cnts),
-          " cells) saved to: ", out_dir, " [", format, "]")
+  if (isTRUE(ok)) {
+    message("   Raw matrix (", nrow(cnts), " genes x ", ncol(cnts),
+            " cells) saved to: ", out_path, " [", format, "]")
+  }
   invisible(out_dir)
 }
 
@@ -249,7 +259,9 @@ export_raw_matrix <- function(cnts, out_dir, format = "mtx") {
 #' @param gene_removal_pattern Character regex
 #' @param mt_pattern Character regex
 #' @param genes_to_remove Character vector
-#' @param min_features Integer
+#' @param min_features Integer. Cells need more than this many detected genes
+#' @param max_features Integer. Cells need fewer than this many detected genes
+#'   (config default 6000 when \code{qc$max_features} is not set)
 #' @param max_counts Integer
 #' @param max_mt_percent Numeric
 #' @param min_cells Integer
@@ -317,7 +329,14 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
   }
 
   manual_list <- genes_to_remove %||% c()
-  pattern_hits <- rownames(so)[grep(gene_removal_pattern, rownames(so))]
+  # An empty/NA pattern means "no pattern-based removal": grep("", x) matches
+  # *every* gene and would wipe the whole matrix.
+  pattern_hits <- if (length(gene_removal_pattern) == 1L &&
+                      !is.na(gene_removal_pattern) && nzchar(gene_removal_pattern)) {
+    rownames(so)[grep(gene_removal_pattern, rownames(so))]
+  } else {
+    character(0)
+  }
   to_remove    <- unique(c(pattern_hits, manual_list))
   present_to_remove <- intersect(to_remove, rownames(so))
   
@@ -338,7 +357,7 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
     )
     so$scDblFinder.class <- sce$scDblFinder.class
     writeLines(
-      capture.output(print(table(so$scDblFinder.class))),
+      utils::capture.output(print(table(so$scDblFinder.class))),
       file.path(qc_dir, paste0("DoubletStats_", file_prefix, ".txt"))
     )
     sub <- subset(so, subset = scDblFinder.class == "singlet")
@@ -370,6 +389,11 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
 #' @param npcs Integer
 #' @param vars_to_regress Character vector of metadata columns to regress
 #' @param split_by Character. Metadata column to split layers for batch integration and Harmony grouping
+#' @param prep_sct_findmarkers Logical. Run Seurat's \code{PrepSCTFindMarkers()}
+#'   right after SCTransform so the SCT counts/data of all samples are on a common
+#'   depth (needed for between-sample DE). It has to happen here: the Assay5
+#'   conversion below discards the per-sample SCT models it needs. No-op with a
+#'   single sample.
 #' @return Processed Seurat object
 #' @export
 run_seurat_processing <- function(seurat_obj, 
@@ -377,7 +401,8 @@ run_seurat_processing <- function(seurat_obj,
                                   resolution = 0.5,
                                   npcs       = 50L,
                                   vars_to_regress = "percent.mt",
-                                  split_by   = "orig.ident") { 
+                                  split_by   = "orig.ident",
+                                  prep_sct_findmarkers = TRUE) { 
   
   if (ncol(seurat_obj) < 10L) stop("Too few cells: ", ncol(seurat_obj))
 
@@ -396,8 +421,26 @@ run_seurat_processing <- function(seurat_obj,
     verbose         = FALSE
   )
 
+  # SCTransform() returns an SCTAssay holding one SCT model per layer (here: per
+  # sample). Cross-sample DE / average expression needs the corrected counts and
+  # data re-expressed at a common sequencing depth, which PrepSCTFindMarkers()
+  # computes *from those models*. The Assay5 coercion below drops them (Assay5
+  # has no SCTModel.list) and FindMarkers() does no depth check on an Assay5, so
+  # Prep has to run here -- afterwards it can no longer run at all.
+  # (run_analysis_unit() used to skip it as "not required" on every run.)
+  # No-op for a single model; a failure is reported but not fatal.
+  if (isTRUE(prep_sct_findmarkers) && inherits(seurat_obj[["SCT"]], "SCTAssay")) {
+    message("   [SCTransform] Running PrepSCTFindMarkers (", length(levels(seurat_obj[["SCT"]])),
+            " SCT model(s))...")
+    seurat_obj <- safe_run(
+      Seurat::PrepSCTFindMarkers(seurat_obj, assay = "SCT", verbose = FALSE),
+      label    = "PrepSCTFindMarkers",
+      fallback = seurat_obj
+    )
+  }
+
   if (!inherits(seurat_obj[["SCT"]], "Assay5")) {
-    seurat_obj[["SCT"]] <- as(seurat_obj[["SCT"]], "Assay5")
+    seurat_obj[["SCT"]] <- methods::as(seurat_obj[["SCT"]], "Assay5")
   }
 
   Seurat::DefaultAssay(seurat_obj) <- "SCT"

@@ -23,6 +23,12 @@ library(Seurat)
 library(ggplot2)
 library(dplyr)
 library(knitr)
+
+# `%||%` is exported by SPARKS but is not on the search path when the package is
+# only loaded (SPARKS::sparks()), and base R only has it from 4.4.0.
+if (!exists("%||%", mode = "function")) {
+  `%||%` <- function(lhs, rhs) if (is.null(lhs) || length(lhs) == 0L) rhs else lhs
+}
 ```
 
 ```{r load-obj}
@@ -67,7 +73,9 @@ kable(as.data.frame(cells_by_condition), col.names = c("Condition", "Number of c
 if ("quant_format" %in% colnames(obj[[]])) {
   fmt_df <- unique(obj@meta.data[, c("orig.ident", "quant_format"), drop = FALSE])
   colnames(fmt_df) <- c("Sample", "Format")
-  kable(fmt_df)
+  # BUG FIX: a bare kable() inside an if-block is never auto-printed, so this
+  # table silently never appeared in the report.
+  print(kable(fmt_df))
   if (!is.null(cfg) && isTRUE(cfg$input$save_raw_matrix)) {
     cat("\nRaw, pre-QC count matrices were saved per sample under ",
         "`results_dir/", group, "/RawMatrix/<folder_id>/` in ",

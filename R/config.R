@@ -1,3 +1,37 @@
+#' Recursively merge an override config onto a base config
+#'
+#' YAML mappings (named lists) are merged key by key; everything else --
+#' scalars, vectors and YAML \emph{sequences} (unnamed lists such as
+#' \code{subsets}, \code{gene_signatures} or \code{singler$labels}) -- is
+#' replaced wholesale by the override. \code{NULL} values in the override are
+#' kept as \code{NULL} (a key set to \code{~} stays present).
+#'
+#' \code{utils::modifyList()} cannot do this: for two unnamed lists it recurses,
+#' finds no names in the override and returns the \emph{base} list unchanged. An
+#' override \code{subsets:} / \code{gene_signatures:} block was therefore silently
+#' ignored whenever the base template defined one, and \code{subsets: []} could
+#' never clear the template's subsets.
+#' @param base Named list
+#' @param override Named list
+#' @return Merged named list
+#' @keywords internal
+.merge_config <- function(base, override) {
+  is_mapping <- function(x) {
+    is.list(x) && !is.null(names(x)) && all(nzchar(names(x)))
+  }
+  # An empty list where the base has a mapping overrides nothing (e.g. an empty
+  # override file); where the base has a *sequence* it clears it (`subsets: []`).
+  if (is_mapping(base) && is.list(override) && length(override) == 0L) return(base)
+  if (!is_mapping(base) || !is_mapping(override)) return(override)
+  for (key in names(override)) {
+    base[key] <- list(
+      if (key %in% names(base)) .merge_config(base[[key]], override[[key]])
+      else override[[key]]
+    )
+  }
+  base
+}
+
 #' Load and merge a base config and an optional override config
 #' @param base_config_path Character. Path to base YAML (template)
 #' @param override_config_path Character. Path to override YAML (your file)
@@ -10,14 +44,17 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
 
   if (!is.null(override_config_path) && file.exists(override_config_path)) {
     override_cfg <- yaml::yaml.load_file(override_config_path)
-    # BUG FIX: modifyList()'s default keep.null = FALSE *deletes* any key the
-    # override sets to null/~ instead of setting it to NULL -- e.g. an
-    # override with `groupings_main: ~` (meant to force auto-detection) would
-    # silently remove "groupings_main" from cfg entirely, which then fails
-    # the required-keys check below even though the override was written
-    # correctly. Confirmed empirically: modifyList(list(x=1), list(x=NULL))
-    # drops `x`; keep.null=TRUE sets it to NULL and keeps the key.
-    cfg <- utils::modifyList(cfg, override_cfg, keep.null = TRUE)
+    if (is.null(override_cfg)) override_cfg <- list()   # empty override file
+    if (!is.list(override_cfg))
+      stop("Override config must be a YAML mapping: ", override_config_path)
+    # Keys the override sets to null/~ are kept as NULL (not deleted), e.g.
+    # `groupings_main: ~` (force auto-detection) must not drop the key and trip
+    # the required-keys check below.
+    # BUG FIX: this used to be utils::modifyList(cfg, override_cfg, keep.null =
+    # TRUE), which silently ignores any override *list* (subsets,
+    # gene_signatures, singler$labels, ...) when the base also defines one --
+    # see .merge_config().
+    cfg <- .merge_config(cfg, override_cfg)
   }
 
 
@@ -42,12 +79,25 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
 
   cfg$processing$cluster_col        <- cfg$processing$cluster_col        %||% "seurat_clusters"
   cfg$processing$condition_col      <- cfg$processing$condition_col      %||% "condition"
+  # process_single_sample() stores the condition in the metadata column
+  # "condition" and the DEG / proportion / plotting helpers read that column by
+  # name, so any other value only fails later with an obscure error.
+  if (!identical(cfg$processing$condition_col, "condition")) {
+    warning("processing$condition_col = '", cfg$processing$condition_col,
+            "' is not supported (the pipeline always stores the condition in ",
+            "'condition'); using 'condition'.", call. = FALSE)
+    cfg$processing$condition_col <- "condition"
+  }
   cfg$processing$reduction          <- cfg$processing$reduction          %||% "umap"
   cfg$processing$cluster_resolution <- cfg$processing$cluster_resolution %||% 0.5
   cfg$processing$npcs               <- cfg$processing$npcs               %||% 50L
   cfg$processing$n_elbow_dims       <- cfg$processing$n_elbow_dims       %||% 30L
   cfg$processing$sct_assay          <- cfg$processing$sct_assay          %||% "SCT"
   cfg$processing$vars_to_regress    <- cfg$processing$vars_to_regress    %||% "percent.mt"
+  # Re-express the SCT corrected counts/data at a common depth (Seurat's
+  # PrepSCTFindMarkers) right after SCTransform, so that cross-sample DE and
+  # average-expression tables are comparable. See run_seurat_processing().
+  cfg$processing$prep_sct_findmarkers <- cfg$processing$prep_sct_findmarkers %||% TRUE
 
 
   if (is.null(cfg$processing$pca_dims)) {
