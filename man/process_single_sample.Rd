@@ -40,7 +40,10 @@ process_single_sample(
 
 \item{genes_to_remove}{Character vector}
 
-\item{min_features}{Integer}
+\item{min_features}{Integer. Cells need more than this many detected genes}
+
+\item{max_features}{Integer. Cells need fewer than this many detected genes
+(config default 6000 when \code{qc$max_features} is not set)}
 
 \item{max_counts}{Integer}
 

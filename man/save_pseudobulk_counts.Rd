@@ -10,7 +10,8 @@ save_pseudobulk_counts(
   file_prefix,
   group_by_col = "seurat_clusters",
   table_sep = "\\t",
-  min_replicates = 3L
+  min_replicates = 3L,
+  condition_col = "condition"
 )
 }
 \arguments{
@@ -24,7 +25,12 @@ save_pseudobulk_counts(
 
 \item{table_sep}{Character}
 
-\item{min_replicates}{Integer. Minimum unique samples required for pseudobulking}
+\item{min_replicates}{Integer. Minimum unique samples (over the whole object)
+required for pseudobulking}
+
+\item{condition_col}{Character. Metadata column holding the condition. Used to
+check that every sample belongs to exactly one condition and to warn when a
+condition has a single sample. Ignored if the column is absent.}
 }
 \description{
 Writes: PseudobulkCounts_{prefix}_by_{col}.txt

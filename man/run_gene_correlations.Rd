@@ -14,7 +14,7 @@ run_gene_correlations(
   cond_col = "condition",
   method = "pearson",
   global_plot = TRUE,
-  assay = "SCT"
+  assay = "RNA"
 )
 }
 \arguments{
@@ -37,6 +37,11 @@ run_gene_correlations(
 
 \item{global_plot}{Logical. If TRUE, generate an overall correlation heatmap
 using all cells (ignoring grouping_col and cond_col). Default TRUE.}
+
+\item{assay}{Character. Assay whose log-normalised \code{data} layer is
+correlated. Default \code{"RNA"} (what \code{run_grouping_analysis()} passes);
+if the assay has no \code{data} layer it is created with
+\code{NormalizeData()}.}
 }
 \value{
 NULL (invisibly). Writes heatmaps and correlation tables to disk.

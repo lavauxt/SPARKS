@@ -12,5 +12,11 @@ lhs \%||\% rhs
 \item{rhs}{Right hand side}
 }
 \description{
-Null coalescing operator
+Returns \code{rhs} when \code{lhs} is \code{NULL} \emph{or has length zero}
+(\code{character(0)}, \code{list()}, ... -- an empty YAML sequence \code{[]}
+parses to \code{list()}). This is deliberately broader than \code{\%||\%} in
+base R (>= 4.4.0), rlang and SeuratObject, which only test for \code{NULL}:
+the pipeline relies on it so that an empty list in a config file falls back
+to the default. Keep the difference in mind if you attach SPARKS together
+with one of those packages.
 }

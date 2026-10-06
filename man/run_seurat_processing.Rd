@@ -10,7 +10,8 @@ run_seurat_processing(
   resolution = 0.5,
   npcs = 50L,
   vars_to_regress = "percent.mt",
-  split_by = "orig.ident"
+  split_by = "orig.ident",
+  prep_sct_findmarkers = TRUE
 )
 }
 \arguments{
@@ -25,6 +26,12 @@ run_seurat_processing(
 \item{vars_to_regress}{Character vector of metadata columns to regress}
 
 \item{split_by}{Character. Metadata column to split layers for batch integration and Harmony grouping}
+
+\item{prep_sct_findmarkers}{Logical. Run Seurat's \code{PrepSCTFindMarkers()}
+right after SCTransform so the SCT counts/data of all samples are on a common
+depth (needed for between-sample DE). It has to happen here: the Assay5
+conversion below discards the per-sample SCT models it needs. No-op with a
+single sample.}
 }
 \value{
 Processed Seurat object
