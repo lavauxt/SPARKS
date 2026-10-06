@@ -191,6 +191,7 @@ genes:
     - "Ccl19"
     - "Cxcl13"
     - "Mfge8"
+    - "Cr2"
 
 # ── Gene Signature Panels ───────────────────────────────────────────────────
 # For each entry below, SPARKS auto-generates, for every grouping column
