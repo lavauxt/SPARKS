@@ -5,6 +5,8 @@
 #' @export
 sparks <- function(base_config_path, override_config_path = NULL, sample_metadata = NULL) {
   cfg <- load_pipeline_config(base_config_path, override_config_path)
+  restore_rng <- .set_seed_preserving_state(cfg$processing$seed)
+  on.exit(restore_rng(), add = TRUE)
 
   if (!requireNamespace("presto", quietly = TRUE)) {
     message("   [INFO] Optional package 'presto' not installed: Seurat's FindMarkers() / ",
@@ -129,7 +131,8 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
         merged_obj <- run_sex_scoring(
           seurat_obj   = merged_obj,
           config_block = cfg$sex_scoring,
-          assay        = "RNA"
+          assay        = "RNA",
+          seed         = cfg$processing$seed
         )
         if (cfg$sex_scoring$regress && "Sex.Difference" %in% colnames(merged_obj[[]])) {
           message("   [INFO] Adding Sex.Difference to SCTransform regression.")
@@ -167,6 +170,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       dims_pca        = cfg$processing$pca_dims,
       resolution      = cfg$processing$cluster_resolution,
       npcs            = cfg$processing$npcs,
+      seed            = cfg$processing$seed,
       vars_to_regress = regress_vars,
       split_by        = "orig.ident",
       prep_sct_findmarkers = isTRUE(cfg$processing$prep_sct_findmarkers)
@@ -606,6 +610,7 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     dims_pca   = pca_dims_sub,
     resolution = cfg$processing$cluster_resolution,
     npcs       = cfg$processing$npcs,
+    seed       = cfg$processing$seed,
     split_by   = "orig.ident",
     prep_sct_findmarkers = isTRUE(cfg$processing$prep_sct_findmarkers))
 

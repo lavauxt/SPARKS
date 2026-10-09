@@ -3,7 +3,8 @@ run_sex_scoring <- function(
     config_block,
     assay = "RNA",
     ctrl = NULL,
-    set.ident = FALSE
+    set.ident = FALSE,
+    seed = 2861L
 ) {
     message("--- Running Sex Scoring ---")
 
@@ -48,12 +49,15 @@ run_sex_scoring <- function(
         return(seurat_obj)
     }
 
+    restore_rng <- .set_seed_preserving_state(seed)
+    on.exit(restore_rng(), add = TRUE)
     object.sex <- Seurat::AddModuleScore(
         object = seurat_obj,
         features = features,
         name = "Sex",
         ctrl = ctrl,
-        assay = assay
+        assay = assay,
+        seed = as.integer(seed)
     )
 
     # BUG FIX: "^Sex" also matches any pre-existing metadata column literally

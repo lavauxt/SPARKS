@@ -15,6 +15,34 @@
   if (is.null(lhs) || length(lhs) == 0L) rhs else lhs
 }
 
+.validate_seed <- function(seed) {
+  if (length(seed) != 1L || is.na(seed) || !is.numeric(seed) ||
+      seed < 0 || seed > .Machine$integer.max || seed != as.integer(seed)) {
+    stop("seed must be a single integer between 0 and .Machine$integer.max.")
+  }
+  as.integer(seed)
+}
+
+.set_seed_preserving_state <- function(seed) {
+  seed <- .validate_seed(seed)
+
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  old_seed <- if (had_seed) get(".Random.seed", envir = .GlobalEnv) else NULL
+  old_kind <- RNGkind()
+
+  set.seed(seed)
+
+  function() {
+    do.call(RNGkind, as.list(old_kind))
+    if (had_seed) {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+    invisible(NULL)
+  }
+}
+
 #' Create directory recursively if it doesn't exist
 #' @param path Character. Directory path
 #' @return Invisible path

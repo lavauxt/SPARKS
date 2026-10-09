@@ -91,6 +91,11 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$processing$reduction          <- cfg$processing$reduction          %||% "umap"
   cfg$processing$cluster_resolution <- cfg$processing$cluster_resolution %||% 0.5
   cfg$processing$npcs               <- cfg$processing$npcs               %||% 50L
+  cfg$processing$seed               <- cfg$processing$seed               %||% 2861L
+  cfg$processing$seed <- tryCatch(
+    .validate_seed(cfg$processing$seed),
+    error = function(e) stop("Invalid processing$seed: ", conditionMessage(e), call. = FALSE)
+  )
   cfg$processing$n_elbow_dims       <- cfg$processing$n_elbow_dims       %||% 30L
   cfg$processing$sct_assay          <- cfg$processing$sct_assay          %||% "SCT"
   cfg$processing$vars_to_regress    <- cfg$processing$vars_to_regress    %||% "percent.mt"

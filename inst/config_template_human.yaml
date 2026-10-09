@@ -66,6 +66,7 @@ qc:
 # ── Seurat processing ──────────────────────────────────────────────────────────
 processing:
   vars_to_regress: ["percent.mt"]
+  seed:               2861   # reproducible SCTransform, PCA, Harmony, UMAP and clustering
   pca_dims_from:      1
   pca_dims_to:        21
   cluster_resolution: 0.5

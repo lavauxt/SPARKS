@@ -59,12 +59,12 @@ cells_by_condition <- table(obj$condition)
 
 **Cells per sample:**
 ```{r cells-by-sample, results='asis'}
-kable(as.data.frame(cells_by_sample), col.names = c("Sample", "Number of cells"))
+print(kable(as.data.frame(cells_by_sample), col.names = c("Sample", "Number of cells")))
 ```
 
 **Cells per condition:**
 ```{r cells-by-condition, results='asis'}
-kable(as.data.frame(cells_by_condition), col.names = c("Condition", "Number of cells"))
+print(kable(as.data.frame(cells_by_condition), col.names = c("Condition", "Number of cells")))
 ```
 
 ## Input data
@@ -132,7 +132,7 @@ print(p2 + p3)
 ```{r doublets}
 if ("scDblFinder.class" %in% colnames(obj[[]])) {
   dtab <- table(obj$scDblFinder.class)
-  kable(as.data.frame(dtab), col.names = c("Class", "Number of cells"))
+  print(kable(as.data.frame(dtab), col.names = c("Class", "Number of cells")))
 } else {
   cat("No doublet classification found in the merged object.",
       "(Doublets were removed before merging; see per-sample stats in the QC folder.)\n")

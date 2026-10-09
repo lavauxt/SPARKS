@@ -11,7 +11,8 @@ run_seurat_processing(
   npcs = 50L,
   vars_to_regress = "percent.mt",
   split_by = "orig.ident",
-  prep_sct_findmarkers = TRUE
+  prep_sct_findmarkers = TRUE,
+  seed = 2861L
 )
 }
 \arguments{
@@ -32,6 +33,8 @@ right after SCTransform so the SCT counts/data of all samples are on a common
 depth (needed for between-sample DE). It has to happen here: the Assay5
 conversion below discards the per-sample SCT models it needs. No-op with a
 single sample.}
+
+\item{seed}{Non-negative integer. Seed used by stochastic Seurat steps.}
 }
 \value{
 Processed Seurat object

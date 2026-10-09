@@ -387,6 +387,7 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
 #' @param dims_pca Integer vector
 #' @param resolution Numeric
 #' @param npcs Integer
+#' @param seed Non-negative integer. Seed used by stochastic Seurat steps.
 #' @param vars_to_regress Character vector of metadata columns to regress
 #' @param split_by Character. Metadata column to split layers for batch integration and Harmony grouping
 #' @param prep_sct_findmarkers Logical. Run Seurat's \code{PrepSCTFindMarkers()}
@@ -402,9 +403,13 @@ run_seurat_processing <- function(seurat_obj,
                                   npcs       = 50L,
                                   vars_to_regress = "percent.mt",
                                   split_by   = "orig.ident",
-                                  prep_sct_findmarkers = TRUE) { 
+                                  prep_sct_findmarkers = TRUE,
+                                  seed       = 2861L) { 
   
   if (ncol(seurat_obj) < 10L) stop("Too few cells: ", ncol(seurat_obj))
+  restore_rng <- .set_seed_preserving_state(seed)
+  on.exit(restore_rng(), add = TRUE)
+  seed <- as.integer(seed)
 
   Seurat::DefaultAssay(seurat_obj) <- "RNA"
 
@@ -418,6 +423,7 @@ run_seurat_processing <- function(seurat_obj,
     new.assay.name  = "SCT",
     vars.to.regress = vars_to_regress,
     vst.flavor      = "v2",
+    seed.use        = seed,
     verbose         = FALSE
   )
 
@@ -445,7 +451,8 @@ run_seurat_processing <- function(seurat_obj,
 
   Seurat::DefaultAssay(seurat_obj) <- "SCT"
   actual_npcs <- min(npcs, ncol(seurat_obj) - 1L)
-  seurat_obj  <- Seurat::RunPCA(seurat_obj, npcs = actual_npcs, verbose = FALSE)
+  seurat_obj  <- Seurat::RunPCA(seurat_obj, npcs = actual_npcs,
+                               seed.use = seed, verbose = FALSE)
 
   actual_dims <- dims_pca[dims_pca <= actual_npcs]
   if (length(actual_dims) < 2L) {
@@ -478,9 +485,14 @@ run_seurat_processing <- function(seurat_obj,
   }
 
   message("   [Clustering] Running UMAP and FindNeighbors on ", cluster_red, "...")
-  seurat_obj <- Seurat::RunUMAP(seurat_obj, reduction = cluster_red, dims = actual_dims, verbose = FALSE)
+  seurat_obj <- Seurat::RunUMAP(seurat_obj, reduction = cluster_red,
+                               dims = actual_dims, seed.use = seed,
+                               verbose = FALSE)
+  # FindNeighbors() has no seed argument in Seurat. It can use RNG for ANN
+  # indexing, so keep it inside the seeded scope established above.
   seurat_obj <- Seurat::FindNeighbors(seurat_obj, reduction = cluster_red, dims = actual_dims, verbose = FALSE)
-  seurat_obj <- Seurat::FindClusters(seurat_obj, resolution = resolution, verbose = FALSE)
+  seurat_obj <- Seurat::FindClusters(seurat_obj, resolution = resolution,
+                                    random.seed = seed, verbose = FALSE)
   
   return(seurat_obj)
 }
