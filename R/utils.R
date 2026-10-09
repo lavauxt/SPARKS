@@ -76,6 +76,25 @@ safe_run <- function(expr, label = "Task", fallback = NULL) {
   gsub("[^A-Za-z0-9_.-]", "_", x)
 }
 
+.find_report_template <- function(configured, config_dir, filename) {
+  if (!is.null(configured)) return(configured)
+
+  namespace_path <- tryCatch(
+    getNamespaceInfo(environment(.find_report_template), "path"),
+    error = function(e) ""
+  )
+  candidates <- c(
+    file.path(config_dir, filename),
+    file.path(getwd(), filename),
+    file.path(getwd(), "inst", "rmd", filename),
+    file.path(namespace_path, "rmd", filename),
+    file.path(namespace_path, "inst", "rmd", filename)
+  )
+  candidates <- candidates[nzchar(candidates)]
+  found <- candidates[file.exists(candidates)]
+  if (length(found) > 0L) found[[1L]] else NULL
+}
+
 #' Save a plot to PNG using ggsave or base R for pheatmap/gtable
 #' @param p Plot object (ggplot or gtable)
 #' @param filename Character. Output file path

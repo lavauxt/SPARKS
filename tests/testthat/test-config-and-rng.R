@@ -56,3 +56,61 @@ test_that("seed helper rejects invalid values", {
   expect_error(SPARKS:::.validate_seed(1.5), "seed must be")
   expect_error(SPARKS:::.validate_seed(c(1L, 2L)), "seed must be")
 })
+
+test_that("report template lookup honors override and search precedence", {
+  config_dir <- tempfile("sparks-config-")
+  working_dir <- tempfile("sparks-working-")
+  dir.create(config_dir)
+  dir.create(working_dir)
+  on.exit(unlink(c(config_dir, working_dir), recursive = TRUE), add = TRUE)
+
+  filename <- "qc_report.Rmd"
+  config_template <- file.path(config_dir, filename)
+  working_template <- file.path(working_dir, filename)
+  writeLines("config", config_template)
+  writeLines("working", working_template)
+
+  expect_identical(
+    SPARKS:::.find_report_template(NULL, config_dir, filename),
+    config_template
+  )
+  expect_identical(
+    SPARKS:::.find_report_template("custom.Rmd", config_dir, filename),
+    "custom.Rmd"
+  )
+
+  unlink(config_template)
+  old_wd <- setwd(working_dir)
+  on.exit(setwd(old_wd), add = TRUE)
+  expect_identical(
+    SPARKS:::.find_report_template(NULL, config_dir, filename),
+    normalizePath(working_template, winslash = "/")
+  )
+})
+
+test_that("report template lookup finds package templates without system.file", {
+  config_dir <- tempfile("sparks-config-")
+  working_dir <- tempfile("sparks-working-")
+  dir.create(config_dir)
+  dir.create(working_dir)
+  on.exit(unlink(c(config_dir, working_dir), recursive = TRUE), add = TRUE)
+
+  old_wd <- setwd(working_dir)
+  on.exit(setwd(old_wd), add = TRUE)
+
+  template <- SPARKS:::.find_report_template(NULL, config_dir, "qc_report.Rmd")
+
+  expect_true(file.exists(template))
+  expect_identical(basename(template), "qc_report.Rmd")
+})
+
+test_that("raw matrix export rejects unsupported formats", {
+  expect_error(
+    SPARKS::export_raw_matrix(NULL, tempfile(), format = "csv"),
+    "format.*mtx.*h5"
+  )
+  expect_error(
+    SPARKS::export_raw_matrix(NULL, tempfile(), format = c("mtx", "h5")),
+    "format.*mtx.*h5"
+  )
+})

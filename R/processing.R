@@ -140,6 +140,11 @@
 #' @return Invisible out_dir, or NULL if DropletUtils isn't installed.
 #' @export
 export_raw_matrix <- function(cnts, out_dir, format = "mtx") {
+  if (!is.character(format) || length(format) != 1L || is.na(format) ||
+      !format %in% c("mtx", "h5")) {
+    stop("`format` must be either 'mtx' or 'h5'.", call. = FALSE)
+  }
+
   if (!requireNamespace("DropletUtils", quietly = TRUE)) {
     message("   [SKIP] export_raw_matrix: 'DropletUtils' not installed. ",
             "Install with: BiocManager::install('DropletUtils')")

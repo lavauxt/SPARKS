@@ -205,17 +205,9 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
 
 
     if (requireNamespace("rmarkdown", quietly = TRUE)) {
-      template_path <- cfg$report$rmd_template %||% {
-
-        candidates <- c(
-          file.path(cfg$pipeline$config_dir, "qc_report.Rmd"),
-          file.path(getwd(),                 "qc_report.Rmd"),
-          system.file("rmd", "qc_report.Rmd", package = "SPARKS")
-        )
-        candidates <- candidates[nzchar(candidates)]
-        found <- candidates[file.exists(candidates)]
-        if (length(found) > 0L) found[1L] else NULL
-      }
+      template_path <- .find_report_template(
+        cfg$report$rmd_template, cfg$pipeline$config_dir, "qc_report.Rmd"
+      )
 
       if (is.null(template_path)) {
         message("   [WARNING] qc_report.Rmd not found – skipping HTML report.",
@@ -268,17 +260,10 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     }
 
     if (requireNamespace("rmarkdown", quietly = TRUE)) {
-      results_template_path <- cfg$report$results_rmd_template %||% {
-
-        candidates <- c(
-          file.path(cfg$pipeline$config_dir, "results_report.Rmd"),
-          file.path(getwd(),                 "results_report.Rmd"),
-          system.file("rmd", "results_report.Rmd", package = "SPARKS")
-        )
-        candidates <- candidates[nzchar(candidates)]
-        found <- candidates[file.exists(candidates)]
-        if (length(found) > 0L) found[1L] else NULL
-      }
+      results_template_path <- .find_report_template(
+        cfg$report$results_rmd_template, cfg$pipeline$config_dir,
+        "results_report.Rmd"
+      )
 
       if (is.null(results_template_path)) {
         message("   [WARNING] results_report.Rmd not found – skipping Results report.",
