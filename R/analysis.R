@@ -13,19 +13,17 @@
 #' @export
 run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
                               group_by_col, min_cells_per_group = 10L) {
-  protocols <- unique(as.character(seurat_obj$condition))
-  if (length(protocols) < 2L) {
-    message("   [SKIP] DEG: only 1 condition present.")
+  metadata <- seurat_obj@meta.data
+  conditions <- as.character(metadata$condition)
+  protocols <- unique(conditions[!is.na(conditions)])
+  if (length(protocols) != 2L) {
+    message("   [SKIP] DEG: exactly 2 conditions are required; found ",
+            length(protocols), ".")
     return(NULL)
   }
 
-  seurat_obj$group_condition <- paste(
-    seurat_obj@meta.data[[group_by_col]],
-    seurat_obj$condition,
-    sep = "_"
-  )
-  Seurat::Idents(seurat_obj) <- "group_condition"
-  all_idents <- as.character(unique(Seurat::Idents(seurat_obj)))
+  group_values <- as.character(metadata[[group_by_col]])
+  cell_names <- rownames(metadata)
 
   groups <- get_valid_groups(seurat_obj@meta.data, group_by_col,
                               min_cells = min_cells_per_group)
@@ -38,16 +36,12 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
   cond2 <- protocols[2L]
 
   marker_list <- lapply(stats::setNames(groups, groups), function(grp) {
-    id1 <- paste(grp, cond1, sep = "_")
-    id2 <- paste(grp, cond2, sep = "_")
-
-    if (!id1 %in% all_idents || !id2 %in% all_idents) {
-      message("   [SKIP] DEG '", grp, "': ident not found.")
-      return(NULL)
-    }
-
-    n1 <- sum(Seurat::Idents(seurat_obj) == id1)
-    n2 <- sum(Seurat::Idents(seurat_obj) == id2)
+    cells1 <- cell_names[!is.na(group_values) & group_values == grp &
+                           !is.na(conditions) & conditions == cond1]
+    cells2 <- cell_names[!is.na(group_values) & group_values == grp &
+                           !is.na(conditions) & conditions == cond2]
+    n1 <- length(cells1)
+    n2 <- length(cells2)
     if (n1 < min_cells_per_group || n2 < min_cells_per_group) {
       message("   [SKIP] DEG '", grp, "': too few cells (",
               n1, " vs ", n2, ").")
@@ -56,8 +50,8 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
 
     markers <- safe_run(
       Seurat::FindMarkers(seurat_obj,
-        ident.1         = id1,
-        ident.2         = id2,
+        cells.1         = cells1,
+        cells.2         = cells2,
         assay           = "SCT",
         logfc.threshold = logfc_threshold,
         min.pct         = min_pct,

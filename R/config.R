@@ -42,7 +42,11 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   if (!file.exists(base_config_path)) stop("Base config not found: ", base_config_path)
   cfg <- yaml::yaml.load_file(base_config_path)
 
-  if (!is.null(override_config_path) && file.exists(override_config_path)) {
+  if (!is.null(override_config_path) && !file.exists(override_config_path)) {
+    stop("Override config not found: ", override_config_path)
+  }
+
+  if (!is.null(override_config_path)) {
     override_cfg <- yaml::yaml.load_file(override_config_path)
     if (is.null(override_cfg)) override_cfg <- list()   # empty override file
     if (!is.list(override_cfg))
@@ -59,7 +63,7 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
 
 
   cfg$pipeline$config_dir <- dirname(normalizePath(base_config_path, mustWork = FALSE))
-  if (!is.null(override_config_path) && file.exists(override_config_path)) {
+  if (!is.null(override_config_path)) {
     cfg$pipeline$override_config_dir <- dirname(
       normalizePath(override_config_path, mustWork = FALSE)
     )
@@ -299,6 +303,14 @@ load_sample_table <- function(cfg) {
     stop("pipeline$sample_table must be a valid file path or a YAML list.")
   }
 
+  .validate_sample_table(df)
+}
+
+.validate_sample_table <- function(df) {
+  if (!is.data.frame(df)) {
+    stop("Sample metadata must be a data frame.")
+  }
+
   if (nrow(df) == 0L) {
     stop("The loaded sample table is empty.")
   }
@@ -306,7 +318,7 @@ load_sample_table <- function(cfg) {
   required_cols <- c("folder_id", "protocol", "comparison_group")
   missing <- setdiff(required_cols, colnames(df))
   if (length(missing) > 0L) {
-    stop("Sample table missing columns: ", paste(missing, collapse = ", "))
+    stop("Sample metadata missing columns: ", paste(missing, collapse = ", "))
   }
 
   df$folder_id        <- as.character(df$folder_id)
@@ -316,5 +328,5 @@ load_sample_table <- function(cfg) {
     df$quant_format <- as.character(df$quant_format)
   }
 
-  return(df)
+  df
 }

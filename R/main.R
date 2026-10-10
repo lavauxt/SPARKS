@@ -12,6 +12,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
   initial_result_files <- .snapshot_result_files(cfg$pipeline$results_dir)
   run_log <- file(file.path(cfg$pipeline$results_dir, "pipeline.log"), open = "wt")
   run_warnings <- character(0)
+  sample_load_failures <- 0L
   log_condition <- function(type, condition) {
     writeLines(
       paste0(format(Sys.time(), "%Y-%m-%d %H:%M:%S"), " [", type, "] ",
@@ -44,18 +45,25 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     message("   [Parallelization] Setting up ", cfg$parallel$workers,
             " workers using strategy: ", cfg$parallel$strategy)
 
-    future::plan(strategy = cfg$parallel$strategy, workers = cfg$parallel$workers)
-    options(future.globals.maxSize = cfg$parallel$max_size_gb * 1024^3)
+    previous_plan <- future::plan()
+    previous_max_size <- getOption("future.globals.maxSize")
+    on.exit({
+      options(future.globals.maxSize = previous_max_size)
+      future::plan(previous_plan)
+    }, add = TRUE)
 
     on.exit({
-      message("   [Parallelization] Reverting to sequential execution and closing workers...")
-      future::plan("sequential")
+      message("   [Parallelization] Restored previous future plan and global-size option.")
     }, add = TRUE)
+    future::plan(strategy = cfg$parallel$strategy, workers = cfg$parallel$workers)
+    options(future.globals.maxSize = cfg$parallel$max_size_gb * 1024^3)
   }
 
   if (is.null(sample_metadata)) {
     message("   [INFO] No sample_metadata argument provided. Loading from YAML config...")
     sample_metadata <- load_sample_table(cfg)
+  } else {
+    sample_metadata <- .validate_sample_table(sample_metadata)
   }
 
   if (isTRUE(cfg$pipeline$independent_samples)) {
@@ -115,6 +123,8 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     })
 
     valid_objects <- Filter(Negate(is.null), protocol_objects)
+    sample_load_failures <- sample_load_failures +
+      sum(vapply(protocol_objects, is.null, logical(1)))
     if (length(valid_objects) == 0L) {
       message("[SKIP] No valid samples for group: ", comp_group)
       next
@@ -234,8 +244,8 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
 
     groupings_main <- cfg$groupings_main
     if (is.null(groupings_main)) {
-      singler_names  <- vapply(cfg$singler$labels, function(x) x$name, character(1))
-      groupings_main <- unique(c(cfg$processing$cluster_col, singler_names))
+      groupings_main <- unique(c(cfg$processing$cluster_col,
+                                 cfg$singler$label_names))
     }
 
     run_analysis_unit(
@@ -330,7 +340,10 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
   writeLines(utils::capture.output(utils::sessionInfo()),
              file.path(cfg$pipeline$results_dir, "session_info.txt"))
 
-  if (length(run_warnings) > 0L) {
+  if (sample_load_failures > 0L) {
+    message("Pipeline finished with ", sample_load_failures,
+            " sample-loading failure(s). See pipeline.log.")
+  } else if (length(run_warnings) > 0L) {
     message("Pipeline finished with warnings. See warnings.txt")
   } else {
     unlink(file.path(cfg$pipeline$results_dir, "warnings.txt"))
@@ -417,11 +430,12 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
   } else if (!isTRUE(cfg$processing$prep_sct_findmarkers)) {
     message("   [INFO] PrepSCTFindMarkers disabled by configuration.")
   }
-  skip_cell_deg <- !sct_available || identical(prep_status, "failed") ||
+  skip_cell_deg <- !sct_available || prep_status %in% c("failed", "disabled") ||
     (isTRUE(cfg$processing$prep_sct_findmarkers) &&
        identical(prep_status, "not_applicable_no_sct_models"))
   if (skip_cell_deg) {
-    message("   [SKIP DEG] SCT preparation failed; cell-level SCT differential expression is unavailable.")
+    message("   [SKIP DEG] SCT preparation failed or was disabled; ",
+            "cell-level SCT differential expression is unavailable.")
   }
 
   for (grp in valid_groupings) {
