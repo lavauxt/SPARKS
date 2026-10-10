@@ -8,6 +8,28 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
   restore_rng <- .set_seed_preserving_state(cfg$processing$seed)
   on.exit(restore_rng(), add = TRUE)
 
+  make_dir(cfg$pipeline$results_dir)
+  initial_result_files <- .snapshot_result_files(cfg$pipeline$results_dir)
+  run_log <- file(file.path(cfg$pipeline$results_dir, "pipeline.log"), open = "wt")
+  run_warnings <- character(0)
+  log_condition <- function(type, condition) {
+    writeLines(
+      paste0(format(Sys.time(), "%Y-%m-%d %H:%M:%S"), " [", type, "] ",
+             conditionMessage(condition)),
+      run_log
+    )
+    flush(run_log)
+  }
+  unlink(file.path(cfg$pipeline$results_dir, "warnings.txt"))
+  on.exit({
+    if (length(run_warnings) > 0L) {
+      writeLines(unique(run_warnings), file.path(cfg$pipeline$results_dir, "warnings.txt"))
+    }
+    close(run_log)
+  }, add = TRUE)
+
+  withCallingHandlers({
+
   if (!requireNamespace("presto", quietly = TRUE)) {
     message("   [INFO] Optional package 'presto' not installed: Seurat's FindMarkers() / ",
             "FindAllMarkers() fall back to a much slower Wilcoxon test.",
@@ -48,7 +70,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
   }
 
   cfg$sample_metadata <- sample_metadata
-  make_dir(cfg$pipeline$results_dir)
 
   for (comp_group in unique(sample_metadata$comparison_group)) {
     message("\n##################################")
@@ -151,16 +172,23 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
           g2m.genes <- stringr::str_to_title(tolower(g2m.genes))
         }
 
-        merged_obj <- Seurat::CellCycleScoring(
-          object       = merged_obj,
-          s.features   = s.genes,
-          g2m.features = g2m.genes,
-          assay        = "RNA"
-        )
+        available_genes <- rownames(merged_obj[["RNA"]])
+        s.genes <- intersect(s.genes, available_genes)
+        g2m.genes <- intersect(g2m.genes, available_genes)
+        if (length(s.genes) > 0L && length(g2m.genes) > 0L) {
+          merged_obj <- Seurat::CellCycleScoring(
+            object       = merged_obj,
+            s.features   = s.genes,
+            g2m.features = g2m.genes,
+            assay        = "RNA"
+          )
 
-        if (cfg$cell_cycle$regress) {
-          message("   [INFO] Adding S.Score, G2M.Score to SCTransform regression.")
-          regress_vars <- unique(c(regress_vars, "S.Score", "G2M.Score"))
+          if (cfg$cell_cycle$regress) {
+            message("   [INFO] Adding S.Score, G2M.Score to SCTransform regression.")
+            regress_vars <- unique(c(regress_vars, "S.Score", "G2M.Score"))
+          }
+        } else {
+          message("   [SKIP Cell Cycle] S or G2M marker genes are absent from the RNA assay.")
         }
       }
     }
@@ -204,35 +232,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     }
 
 
-    if (requireNamespace("rmarkdown", quietly = TRUE)) {
-      template_path <- .find_report_template(
-        cfg$report$rmd_template, cfg$pipeline$config_dir, "qc_report.Rmd"
-      )
-
-      if (is.null(template_path)) {
-        message("   [WARNING] qc_report.Rmd not found – skipping HTML report.",
-                "\n            Place qc_report.Rmd alongside your config YAML,",
-                "\n            set cfg$report$rmd_template in your override config,",
-                "\n            or reinstall SPARKS so inst/rmd/qc_report.Rmd ships",
-                "\n            with the package.")
-      } else {
-        # A failing report (e.g. a missing optional package) must not abort the
-        # whole run -- the results report used to take the pipeline down *before*
-        # the merged object was saved.
-        safe_run(generate_qc_report(
-          seurat_obj   = merged_obj,
-          comp_group   = comp_group,
-          out_dir      = dirs$qc,          
-          author       = cfg$report$author %||% "Pipeline User",
-          title        = cfg$report$title  %||% paste("QC Report -", comp_group),
-          rmd_template = template_path,
-          cfg          = cfg
-        ), label = "QC report")
-      }
-    } else {
-      message("   [SKIP] rmarkdown not installed – QC report not generated.")
-    }
-
     groupings_main <- cfg$groupings_main
     if (is.null(groupings_main)) {
       singler_names  <- vapply(cfg$singler$labels, function(x) x$name, character(1))
@@ -259,46 +258,92 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       )
     }
 
-    if (requireNamespace("rmarkdown", quietly = TRUE)) {
-      results_template_path <- .find_report_template(
-        cfg$report$results_rmd_template, cfg$pipeline$config_dir,
-        "results_report.Rmd"
-      )
-
-      if (is.null(results_template_path)) {
-        message("   [WARNING] results_report.Rmd not found – skipping Results report.",
-                "\n            Place results_report.Rmd alongside your config YAML,",
-                "\n            set cfg$report$results_rmd_template in your override config,",
-                "\n            or reinstall SPARKS so inst/rmd/results_report.Rmd ships",
-                "\n            with the package.")
-      } else {
-        safe_run(generate_results_report(
-          seurat_obj   = merged_obj,
-          comp_group   = comp_group,
-          out_dir      = dirs$base,          
-          groupings    = groupings_main,
-          author       = cfg$report$author %||% "Pipeline User",
-          title        = cfg$report$title  %||% paste("Results Report -", comp_group),
-          rmd_template = results_template_path,
-          cfg          = cfg
-        ), label = "Results report")
-      }
-    }
-
     .save_rdata(merged_obj, dirs$rdata, paste0("Merged_", comp_group))
     rm(merged_obj); gc()
+  }
+
+  if (requireNamespace("rmarkdown", quietly = TRUE)) {
+    qc_template <- .find_report_template(
+      cfg$report$rmd_template, cfg$pipeline$config_dir, "qc_report.Rmd"
+    )
+    results_template <- .find_report_template(
+      cfg$report$results_rmd_template, cfg$pipeline$config_dir,
+      "results_report.Rmd"
+    )
+    if (is.null(qc_template)) message("   [SKIP QC report] Template is not available.")
+    if (is.null(results_template)) message("   [SKIP Results report] Template is not available.")
+
+    for (comp_group in unique(sample_metadata$comparison_group)) {
+      dirs <- .setup_group_dirs(cfg$pipeline$results_dir, comp_group)
+      object_path <- file.path(dirs$rdata, paste0("Merged_", comp_group, ".rds"))
+      if (!file.exists(object_path)) next
+      report_obj <- readRDS(object_path)
+      groupings <- cfg$groupings_main
+      if (is.null(groupings)) {
+        groupings <- unique(c(cfg$processing$cluster_col, cfg$singler$label_names))
+      }
+      current_files <- .changed_result_files(initial_result_files, dirs$base)
+
+      if (!is.null(qc_template)) {
+        safe_run(generate_qc_report(
+          seurat_obj = report_obj,
+          comp_group = comp_group,
+          out_dir = dirs$qc,
+          author = cfg$report$author %||% "Pipeline User",
+          title = cfg$report$title %||% paste("QC Report -", comp_group),
+          rmd_template = qc_template,
+          cfg = cfg,
+          run_files = intersect(current_files,
+                                list.files(dirs$qc, recursive = TRUE,
+                                           full.names = TRUE)),
+          log_path = file.path(cfg$pipeline$results_dir, "pipeline.log")
+        ), label = "QC report")
+      }
+      if (!is.null(results_template)) {
+        report_groupings <- groupings
+        if (is.null(report_groupings) || length(report_groupings) == 0L) {
+          report_groupings <- unique(c(cfg$processing$cluster_col,
+                                       cfg$singler$label_names))
+        }
+        report_groupings <- report_groupings[
+          report_groupings %in% colnames(report_obj@meta.data)
+        ]
+        safe_run(generate_results_report(
+          seurat_obj = report_obj,
+          comp_group = comp_group,
+          out_dir = dirs$base,
+          groupings = report_groupings,
+          author = cfg$report$author %||% "Pipeline User",
+          title = cfg$report$title %||% paste("Results Report -", comp_group),
+          rmd_template = results_template,
+          cfg = cfg,
+          run_files = current_files,
+          log_path = file.path(cfg$pipeline$results_dir, "pipeline.log")
+        ), label = "Results report")
+      }
+      rm(report_obj)
+    }
+  } else {
+    message("   [SKIP HTML reports] Package 'rmarkdown' is not installed.")
   }
 
   writeLines(utils::capture.output(utils::sessionInfo()),
              file.path(cfg$pipeline$results_dir, "session_info.txt"))
 
-  w <- utils::capture.output(warnings())
-  if (length(w) > 0L && !all(grepl("no warnings", w, ignore.case = TRUE))) {
-    writeLines(w, file.path(cfg$pipeline$results_dir, "warnings.txt"))
+  if (length(run_warnings) > 0L) {
     message("Pipeline finished with warnings. See warnings.txt")
   } else {
+    unlink(file.path(cfg$pipeline$results_dir, "warnings.txt"))
     message("Pipeline finished successfully.")
   }
+  },
+  message = function(m) log_condition("MESSAGE", m),
+  warning = function(w) {
+    run_warnings <<- c(run_warnings, conditionMessage(w))
+    log_condition("WARNING", w)
+  },
+  error = function(e) log_condition("ERROR", e)
+  )
 }
 
 #' Run all analyses for a Seurat object (main or subset)
@@ -321,24 +366,62 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
   if (length(skipped) > 0L)
     message("   [SKIP] columns not found: ", paste(skipped, collapse = ", "))
 
-  Seurat::DefaultAssay(seurat_obj) <- "SCT"
-
-  # run_seurat_processing() runs PrepSCTFindMarkers() right after SCTransform and
-  # only then converts SCT to an Assay5. An Assay5 carries no SCT models, so Prep
-  # can no longer run on it -- that is the only reason to skip it here (it used
-  # to be skipped for *every* object, so it never ran at all).
-  # An object that still holds an SCTAssay (an RDS from an older run, or one
-  # built outside run_seurat_processing()) is prepared here instead; this is a
-  # no-op when only one SCT model is stored.
-  if (inherits(seurat_obj[["SCT"]], "SCTAssay")) {
-    seurat_obj <- safe_run(
-      Seurat::PrepSCTFindMarkers(seurat_obj, verbose = TRUE),
-      label    = "PrepSCTFindMarkers",
-      fallback = seurat_obj
-    )
+  sct_available <- "SCT" %in% names(seurat_obj@assays)
+  if (!sct_available) {
+    message("   [SKIP DEG] SCT assay is not available; descriptive processing continues.")
   } else {
-    message("   [INFO] SCT assay has no SCT models (Assay5): PrepSCTFindMarkers cannot run here; ",
-            "it is applied in run_seurat_processing() (processing$prep_sct_findmarkers).")
+    Seurat::DefaultAssay(seurat_obj) <- "SCT"
+  }
+
+  gsea_pathways <- NULL
+  if (isTRUE(cfg$gsea$run) && requireNamespace("edgeR", quietly = TRUE) &&
+      requireNamespace("fgsea", quietly = TRUE)) {
+    gsea_pathways <- tryCatch(
+      .hallmark_gene_sets(cfg$pipeline$species_target, cfg$gsea$collection),
+      error = function(e) {
+        message("   [SKIP GSEA] Could not load MSigDB collection '",
+                cfg$gsea$collection, "' gene sets: ", conditionMessage(e))
+        NULL
+      }
+    )
+    if (is.null(gsea_pathways)) {
+      message("   [SKIP GSEA] No gene sets loaded for MSigDB collection '",
+              cfg$gsea$collection, "'.")
+    }
+  } else if (isTRUE(cfg$gsea$run) && !requireNamespace("edgeR", quietly = TRUE)) {
+    message("   [SKIP GSEA] Ranked GSEA requires Bioconductor package 'edgeR'.")
+  } else if (isTRUE(cfg$gsea$run) && !requireNamespace("fgsea", quietly = TRUE)) {
+    message("   [SKIP GSEA] Ranked GSEA requires package 'fgsea'.")
+  }
+
+  # Older or externally generated objects may still retain an SCTAssay.
+  prep_status <- seurat_obj@misc$sparks_prep_sct_findmarkers %||% "unknown"
+  if (isTRUE(cfg$processing$prep_sct_findmarkers) &&
+      sct_available &&
+      identical(prep_status, "unknown") &&
+      inherits(seurat_obj[["SCT"]], "SCTAssay")) {
+    prep_result <- tryCatch(
+      list(object = Seurat::PrepSCTFindMarkers(seurat_obj, verbose = FALSE),
+           status = "succeeded_on_analysis_object"),
+      error = function(e) {
+        message("   [WARNING] PrepSCTFindMarkers failed: ", conditionMessage(e))
+        list(object = seurat_obj, status = "failed")
+      }
+    )
+    seurat_obj <- prep_result$object
+    prep_status <- prep_result$status
+  }
+  if (inherits(seurat_obj[["SCT"]], "Assay5")) {
+    message("   [INFO] SCT Assay5 cannot retain SCT models; PrepSCTFindMarkers status: ",
+            prep_status, ".")
+  } else if (!isTRUE(cfg$processing$prep_sct_findmarkers)) {
+    message("   [INFO] PrepSCTFindMarkers disabled by configuration.")
+  }
+  skip_cell_deg <- !sct_available || identical(prep_status, "failed") ||
+    (isTRUE(cfg$processing$prep_sct_findmarkers) &&
+       identical(prep_status, "not_applicable_no_sct_models"))
+  if (skip_cell_deg) {
+    message("   [SKIP DEG] SCT preparation failed; cell-level SCT differential expression is unavailable.")
   }
 
   for (grp in valid_groupings) {
@@ -350,7 +433,9 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
       base_dir     = base_dir,
       suffix       = suffix,
       deg_color    = deg_color,
-      cfg          = cfg
+      cfg          = cfg,
+      gsea_pathways = gsea_pathways,
+      skip_cell_deg = skip_cell_deg
     )
   }
 
@@ -373,7 +458,8 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
 #' @export
 run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
                                    genes_list, base_dir, suffix,
-                                   deg_color, cfg) {
+                                   deg_color, cfg, gsea_pathways = NULL,
+                                   skip_cell_deg = FALSE) {
   message("   -> Grouping: ", group_col)
 
   group_dir <- file.path(base_dir, suffix, file_prefix, group_col)
@@ -385,8 +471,12 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   umap_h        <- if (is_fine) cfg$plot$umap_height_fine else cfg$plot$umap_height_standard
 
   do_deg <- isTRUE(cfg$deg$run %||% TRUE)
-  if (!do_deg)
+  do_cell_deg <- do_deg && !isTRUE(skip_cell_deg)
+  if (!do_deg) {
     message("   [INFO] deg$run = FALSE: skipping between-condition DEG and statistics.")
+  } else if (!do_cell_deg) {
+    message("   [SKIP DEG] SCT preparation/assay unavailable; cell-level DEG skipped.")
+  }
 
   cond_vals <- unique(seurat_obj@meta.data[[cfg$processing$condition_col]])
   p_umap <- Seurat::DimPlot(seurat_obj,
@@ -395,7 +485,7 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     label     = TRUE, repel = TRUE,
     split.by  = cfg$processing$condition_col) +
     ggplot2::ggtitle(paste0(file_prefix, " | ", group_col, " | ",
-                             paste(cond_vals, collapse = if (do_deg) " vs " else " / "),
+                             paste(cond_vals, collapse = if (do_cell_deg) " vs " else " / "),
                              " | ", suffix))
 
   if (is_fine)
@@ -413,11 +503,15 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   generate_violin_plots(seurat_obj, genes_list, dirs$VlnPlot, file_prefix,
                          group_by_col = group_col)
 
-  run_proportion_analysis(seurat_obj, group_col, dirs$DEG, file_prefix,
-                          run_test = do_deg)
-  if (do_deg) run_scproportion_test(seurat_obj, group_col, dirs$DEG, file_prefix)
+  if (isTRUE(cfg$proportions$run)) {
+    run_proportion_analysis(seurat_obj, group_col, dirs$Proportions, file_prefix,
+                            run_test = do_cell_deg)
+    if (do_cell_deg) {
+      run_scproportion_test(seurat_obj, group_col, dirs$Proportions, file_prefix)
+    }
+  }
 
-  if (do_deg) {
+  if (do_cell_deg) {
     all_markers <- run_deg_analysis(seurat_obj,
       logfc_threshold     = cfg$deg$logfc_threshold,
       min_pct             = cfg$deg$min_pct,
@@ -447,8 +541,28 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
       height          = cfg$plot$deg_umap_height)
   }
 
-  for (layer in cfg$deg$avg_expression_layers) {
-    save_average_expression(seurat_obj, dirs$DEG, file_prefix,
+  if (isTRUE(cfg$pseudobulk$run) || isTRUE(cfg$gsea$run)) {
+    .run_sample_level_analysis(
+      seurat_obj = seurat_obj,
+      group_col = group_col,
+      pseudobulk_dir = file.path(dirs$Pseudobulk, "DEG"),
+      gsea_dir = dirs$GSEA,
+      file_prefix = file_prefix,
+      species = cfg$pipeline$species_target,
+      condition_col = cfg$processing$condition_col,
+      sample_col = "sample",
+      min_replicates = cfg$pseudobulk$min_replicates,
+      run_pseudobulk_deg = isTRUE(cfg$pseudobulk$run),
+      run_gsea = isTRUE(cfg$gsea$run),
+      pathways = gsea_pathways,
+      collection = cfg$gsea$collection,
+      gsea_min_size = cfg$gsea$min_size,
+      gsea_max_size = cfg$gsea$max_size
+    )
+  }
+
+  for (layer in cfg$expression$layers) {
+    save_average_expression(seurat_obj, dirs$Expression, file_prefix,
       group_by_col    = group_col,
       layer           = layer,
       table_sep       = cfg$deg$table_sep,
@@ -456,10 +570,13 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
       table_row_names = cfg$deg$table_row_names)
   }
 
-  save_pseudobulk_counts(seurat_obj, dirs$DEG, file_prefix,
-                         group_by_col  = group_col,
-                         table_sep     = cfg$deg$table_sep,
-                         condition_col = cfg$processing$condition_col)
+  if (isTRUE(cfg$pseudobulk$save_counts)) {
+    save_pseudobulk_counts(seurat_obj, dirs$Pseudobulk, file_prefix,
+                           group_by_col  = group_col,
+                           table_sep     = cfg$deg$table_sep,
+                           condition_col = cfg$processing$condition_col,
+                           min_replicates = cfg$pseudobulk$min_replicates)
+  }
 
   generate_cluster_markers_and_heatmap(seurat_obj, group_col, dirs$Heatmap, file_prefix)
 
@@ -535,6 +652,8 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     generate_escape_plots(seurat_obj, method = cfg$escape$method,
                           group_col = group_col, out_dir = group_dir,
                           prefix = file_prefix)
+  } else {
+    message("   [INFO] Per-cell escape scoring disabled by configuration.")
   }
 
   cx <- cfg$genes$corr_genes_x
@@ -545,7 +664,7 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
       grouping_col = group_col,
       genes_x      = cx,
       genes_y      = cy,
-      out_dir      = group_dir,
+      out_dir      = dirs$Correlation,
       prefix       = paste0(file_prefix, "_", group_col),
       cond_col     = "condition",
       method       = "pearson",

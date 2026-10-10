@@ -104,6 +104,35 @@ test_that("report template lookup finds package templates without system.file", 
   expect_identical(basename(template), "qc_report.Rmd")
 })
 
+test_that("pipeline log handlers preserve messages and warnings", {
+  log_file <- tempfile()
+  log_con <- file(log_file, open = "wt")
+  on.exit({
+    close(log_con)
+    unlink(log_file)
+  }, add = TRUE)
+  logged <- character()
+  handler <- function(type, condition) {
+    logged <<- c(logged, paste(type, conditionMessage(condition)))
+    writeLines(tail(logged, 1L), log_con)
+    flush(log_con)
+  }
+  expect_warning(
+    withCallingHandlers(
+      {
+        message("test message")
+        warning("test warning", call. = FALSE)
+      },
+      message = function(m) handler("MESSAGE", m),
+      warning = function(w) handler("WARNING", w)
+    ),
+    "test warning"
+  )
+  expect_true(any(grepl("MESSAGE test message", logged, fixed = TRUE)))
+  expect_true(any(grepl("WARNING test warning", logged, fixed = TRUE)))
+  expect_true(any(grepl("test warning", readLines(log_file), fixed = TRUE)))
+})
+
 test_that("raw matrix export rejects unsupported formats", {
   expect_error(
     SPARKS::export_raw_matrix(NULL, tempfile(), format = "csv"),
@@ -113,4 +142,51 @@ test_that("raw matrix export rejects unsupported formats", {
     SPARKS::export_raw_matrix(NULL, tempfile(), format = c("mtx", "h5")),
     "format.*mtx.*h5"
   )
+})
+
+test_that("only the known Seurat aggregate advisory is muffled", {
+  known <- "As of Seurat v5, we recommend using AggregateExpression to perform pseudo-bulk analysis."
+  other <- "another informative message"
+
+  expect_message(
+    SPARKS:::.with_seurat_aggregate_advisory_muffled(message(known)),
+    NA
+  )
+  expect_message(
+    SPARKS:::.with_seurat_aggregate_advisory_muffled(message(other)),
+    "another informative message"
+  )
+})
+
+test_that("QC report looks up metadata columns, not cell row names", {
+  report <- readLines(testthat::test_path("..", "..", "inst", "rmd",
+                                          "qc_report.Rmd"), warn = FALSE)
+  expect_true(any(grepl("colnames\\(obj\\[\\[\\]\\]\\)", report)))
+  expect_false(any(grepl("qc_features.*rownames\\(obj", report)))
+})
+
+test_that("results report covers current-run analyses and diagnostics", {
+  report <- readLines(testthat::test_path("..", "..", "inst", "rmd",
+                                          "results_report.Rmd"), warn = FALSE)
+  expect_true(any(grepl("run_files", report, fixed = TRUE)))
+  expect_true(any(grepl("correlation-results", report, fixed = TRUE)))
+  expect_true(any(grepl("Pipeline diagnostics", report, fixed = TRUE)))
+  expect_true(any(grepl("Per-cell pathway scoring", report, fixed = TRUE)))
+})
+
+test_that("sample-level and Hallmark analysis config has deliberate defaults", {
+  cfg <- list(
+    pipeline = list(), qc = list(), processing = list(), deg = list(),
+    plot = list(), species = list(), singler = list(), groupings_main = NULL
+  )
+  file <- tempfile(fileext = ".yml")
+  on.exit(unlink(file), add = TRUE)
+  yaml::write_yaml(cfg, file)
+
+  loaded <- SPARKS::load_pipeline_config(file)
+  expect_false(loaded$pseudobulk$run)
+  expect_true(loaded$pseudobulk$save_counts)
+  expect_equal(loaded$pseudobulk$min_replicates, 2L)
+  expect_true(loaded$gsea$run)
+  expect_identical(loaded$gsea$collection, "H")
 })

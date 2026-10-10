@@ -77,6 +77,223 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
   result
 }
 
+.fit_pseudobulk_edger <- function(counts, sample_meta, condition_col = "condition",
+                                 min_replicates = 2L) {
+  if (!requireNamespace("edgeR", quietly = TRUE)) {
+    return(list(status = "edgeR is not installed", result = NULL))
+  }
+  counts_dim <- dim(counts)
+  if (length(counts_dim) != 2L || is.null(nrow(sample_meta)) ||
+      counts_dim[2L] != nrow(sample_meta)) {
+    return(list(status = "count columns do not match sample metadata", result = NULL))
+  }
+  if (nrow(counts) == 0L || ncol(counts) == 0L) {
+    return(list(status = "no pseudobulk counts are available", result = NULL))
+  }
+  if (!all(c("sample", condition_col) %in% colnames(sample_meta))) {
+    return(list(status = "sample or condition metadata is missing", result = NULL))
+  }
+
+  sample_meta <- sample_meta[, c("sample", condition_col), drop = FALSE]
+  sample_meta$sample <- as.character(sample_meta$sample)
+  sample_meta[[condition_col]] <- as.character(sample_meta[[condition_col]])
+  if (anyNA(sample_meta$sample) || anyNA(sample_meta[[condition_col]]) ||
+      anyDuplicated(sample_meta$sample)) {
+    return(list(status = "sample metadata must have one non-missing row per sample", result = NULL))
+  }
+  if (!identical(colnames(counts), sample_meta$sample)) {
+    return(list(status = "count columns and sample metadata are not identically ordered", result = NULL))
+  }
+
+  positive_lib <- Matrix::colSums(counts) > 0
+  if (!any(positive_lib)) {
+    return(list(status = "all pseudobulk samples have zero counts", result = NULL))
+  }
+  counts <- counts[, positive_lib, drop = FALSE]
+  sample_meta <- sample_meta[positive_lib, , drop = FALSE]
+
+  conditions <- unique(sample_meta[[condition_col]])
+  reps <- table(factor(sample_meta[[condition_col]], levels = conditions))
+  if (length(conditions) != 2L) {
+    return(list(status = "exactly two conditions are required", result = NULL))
+  }
+  if (any(reps < min_replicates)) {
+    return(list(status = paste0("at least ", min_replicates,
+                                " samples per condition are required"), result = NULL))
+  }
+
+  condition <- factor(sample_meta[[condition_col]],
+                      levels = conditions)
+  design <- stats::model.matrix(~ 0 + condition)
+  colnames(design) <- conditions
+  if (nrow(design) <= ncol(design)) {
+    return(list(status = "no residual degrees of freedom for edgeR model", result = NULL))
+  }
+
+  y <- edgeR::DGEList(counts = as.matrix(counts), samples = sample_meta)
+  keep <- edgeR::filterByExpr(y, design = design)
+  if (!any(keep)) return(list(status = "no genes pass edgeR expression filtering", result = NULL))
+  y <- y[keep, , keep.lib.sizes = FALSE]
+  y <- edgeR::normLibSizes(y)
+  y <- edgeR::estimateDisp(y, design, robust = TRUE)
+  fit <- edgeR::glmQLFit(y, design, robust = TRUE)
+  contrast <- rep(0, length(conditions))
+  contrast[2L] <- 1
+  contrast[1L] <- -1
+  test <- edgeR::glmQLFTest(fit, contrast = contrast)
+  result <- edgeR::topTags(test, n = Inf, sort.by = "none")$table
+  result$gene <- rownames(result)
+  result$rank_stat <- sign(result$logFC) * sqrt(result$F)
+  result$condition_1 <- conditions[1L]
+  result$condition_2 <- conditions[2L]
+    colnames(result)[colnames(result) == "FDR"] <- "p_val_adj"
+  rownames(result) <- NULL
+  list(status = "ok", result = result)
+}
+
+.aggregate_group_counts <- function(seurat_obj, group_col, group_value,
+                                    sample_col, condition_col) {
+  if (!"RNA" %in% names(seurat_obj@assays)) {
+    return(list(status = "RNA assay is not available", result = NULL))
+  }
+  md <- seurat_obj@meta.data
+  sample_map <- unique(data.frame(sample = as.character(md[[sample_col]]),
+                                  condition = as.character(md[[condition_col]]),
+                                  stringsAsFactors = FALSE))
+  sample_map <- sample_map[!is.na(sample_map$sample) &
+                             !is.na(sample_map$condition), , drop = FALSE]
+  if (anyDuplicated(sample_map$sample)) {
+    return(list(status = "a sample is assigned to multiple conditions", result = NULL))
+  }
+  cells <- rownames(md)[!is.na(md[[group_col]]) &
+    as.character(md[[group_col]]) == group_value &
+    !is.na(md[[sample_col]]) & !is.na(md[[condition_col]])]
+  if (length(cells) == 0L) return(NULL)
+
+  group_md <- md[cells, , drop = FALSE]
+  present_samples <- unique(as.character(group_md[[sample_col]]))
+  sample_map <- sample_map[sample_map$sample %in% present_samples, , drop = FALSE]
+  sample_map <- sample_map[order(sample_map$sample), , drop = FALSE]
+  sample_idx <- match(as.character(group_md[[sample_col]]), sample_map$sample)
+  aggregation <- Matrix::sparseMatrix(
+    i = seq_along(sample_idx), j = sample_idx, x = 1,
+    dims = c(length(sample_idx), nrow(sample_map))
+  )
+  counts <- SeuratObject::LayerData(seurat_obj, assay = "RNA", layer = "counts")
+  counts <- counts[, cells, drop = FALSE] %*% aggregation
+  colnames(counts) <- sample_map$sample
+  list(counts = counts, sample_meta = sample_map)
+}
+
+.run_sample_level_analysis <- function(seurat_obj, group_col,
+                                       pseudobulk_dir, gsea_dir,
+                                       file_prefix, species,
+                                       condition_col = "condition",
+                                       sample_col = "sample",
+                                       min_replicates = 2L,
+                                       run_pseudobulk_deg = FALSE,
+                                       run_gsea = TRUE,
+                                       pathways = NULL,
+                                       collection = "H",
+                                       gsea_min_size = 10L,
+                                       gsea_max_size = 500L) {
+  if (!isTRUE(run_pseudobulk_deg) && !isTRUE(run_gsea)) return(invisible(NULL))
+  if (!requireNamespace("edgeR", quietly = TRUE)) {
+    task <- c(if (run_pseudobulk_deg) "pseudobulk DEG", if (run_gsea) "ranked GSEA")
+    message("   [SKIP] ", paste(task, collapse = " and "),
+            " requires Bioconductor package 'edgeR'.")
+    return(invisible(NULL))
+  }
+  if (run_gsea && !requireNamespace("fgsea", quietly = TRUE)) {
+    message("   [SKIP GSEA] Ranked GSEA requires package 'fgsea'.")
+    run_gsea <- FALSE
+  }
+  md <- seurat_obj@meta.data
+  missing <- setdiff(c(group_col, condition_col, sample_col), colnames(md))
+  if (length(missing)) {
+    message("   [SKIP Sample-level analysis] Missing metadata: ",
+            paste(missing, collapse = ", "))
+    return(invisible(NULL))
+  }
+
+  groups <- unique(as.character(md[[group_col]]))
+  groups <- groups[!is.na(groups)]
+  if (run_pseudobulk_deg) make_dir(pseudobulk_dir)
+  if (run_gsea && is.null(pathways)) {
+    pathways <- tryCatch(.hallmark_gene_sets(species, collection), error = function(e) {
+      message("   [SKIP GSEA] Could not load MSigDB collection '", collection,
+              "' gene sets: ", conditionMessage(e))
+      NULL
+    })
+  }
+
+  for (group in groups) {
+    aggregated <- tryCatch(
+      .aggregate_group_counts(seurat_obj, group_col, group, sample_col, condition_col),
+      error = function(e) list(status = conditionMessage(e))
+    )
+    if (is.null(aggregated)) {
+      message("   [SKIP Sample-level analysis] ", group, ": no cells/counts available.")
+      next
+    }
+    if (!is.null(aggregated$status)) {
+      message("   [SKIP Sample-level analysis] ", group, ": ", aggregated$status, ".")
+      next
+    }
+    fit <- .fit_pseudobulk_edger(
+      aggregated$counts, aggregated$sample_meta, condition_col, min_replicates
+    )
+    if (!identical(fit$status, "ok")) {
+      message("   [SKIP Sample-level analysis] ", group, ": ", fit$status, ".")
+      next
+    }
+    fit$result$cluster <- group
+    if (run_gsea && is.null(pathways)) {
+      message("   [SKIP GSEA] ", group, ": MSigDB collection '", collection,
+              "' gene sets are unavailable; edgeR model completed.")
+    }
+    if (run_pseudobulk_deg) {
+      write_table(
+        fit$result,
+        file.path(pseudobulk_dir, paste0("PseudobulkDEG_", file_prefix, "_",
+                                         .safe_filename(group), "_by_", group_col, ".txt"))
+      )
+    }
+
+    if (run_gsea && !is.null(pathways)) {
+      stats <- fit$result$rank_stat
+      names(stats) <- fit$result$gene
+      stats <- sort(stats[is.finite(stats)], decreasing = TRUE)
+      result <- tryCatch(
+        fgsea::fgseaMultilevel(pathways, stats, minSize = gsea_min_size,
+                               maxSize = min(gsea_max_size, length(stats))),
+        error = function(e) {
+          message("   [SKIP GSEA] ", group, ": ", conditionMessage(e))
+          NULL
+        }
+      )
+      if (!is.null(result) && nrow(result) > 0L) {
+        make_dir(gsea_dir)
+        result$leadingEdge <- vapply(result$leadingEdge, paste,
+                                     collapse = ";", character(1))
+        result$group <- group
+        result$condition_1 <- fit$result$condition_1[1L]
+        result$condition_2 <- fit$result$condition_2[1L]
+        collection_tag <- .safe_filename(collection)
+        utils::write.table(
+          result,
+          file.path(gsea_dir, paste0("GSEA_", collection_tag, "_", file_prefix, "_",
+                                     .safe_filename(group), "_by_", group_col, ".tsv")),
+          sep = "\t", quote = FALSE, row.names = FALSE
+        )
+      } else if (!is.null(result)) {
+        message("   [SKIP GSEA] ", group, ": no gene sets passed size filters.")
+      }
+    }
+  }
+  invisible(NULL)
+}
+
 #' Process and save DEG results to TSV/TXT files
 #'
 #' Writes:
@@ -179,8 +396,24 @@ save_average_expression <- function(seurat_obj, output_dir, file_prefix,
                                      table_row_names = FALSE) {
   if (!group_by_col %in% colnames(seurat_obj@meta.data)) return(invisible(NULL))
   if (!"condition"  %in% colnames(seurat_obj@meta.data)) return(invisible(NULL))
+  if (identical(layer, "counts") && !"RNA" %in% names(seurat_obj@assays)) {
+    message("   [SKIP Average expression] RNA assay is not available for count layer.")
+    return(invisible(NULL))
+  }
+  if (identical(layer, "counts")) {
+    count_layers <- tryCatch(SeuratObject::Layers(seurat_obj[["RNA"]]),
+                             error = function(e) character(0))
+    if (!"counts" %in% count_layers) {
+      message("   [SKIP Average expression] RNA counts layer is not available.")
+      return(invisible(NULL))
+    }
+  }
 
-   Seurat::DefaultAssay(seurat_obj) <- "SCT"
+  if (identical(layer, "counts")) {
+    Seurat::DefaultAssay(seurat_obj) <- "RNA"
+  } else {
+    Seurat::DefaultAssay(seurat_obj) <- "SCT"
+  }
 
   seurat_obj$group_condition <- paste(
     seurat_obj@meta.data[[group_by_col]],
@@ -189,13 +422,28 @@ save_average_expression <- function(seurat_obj, output_dir, file_prefix,
   )
   Seurat::Idents(seurat_obj) <- "group_condition"
 
-  avg <- get_avg_expr(seurat_obj, layer = layer)
-  if (is.null(avg)) return(invisible(NULL))
+  if (identical(layer, "counts")) {
+    avg <- safe_run({
+      counts <- SeuratObject::LayerData(seurat_obj, assay = "RNA", layer = "counts")
+      groups <- Seurat::Idents(seurat_obj)
+      result <- vapply(levels(groups), function(group) {
+        cells <- names(groups)[groups == group]
+        Matrix::rowMeans(counts[, cells, drop = FALSE])
+      }, FUN.VALUE = numeric(nrow(counts)))
+      rownames(result) <- rownames(counts)
+      result
+    }, label = "RNA average counts")
+    if (is.null(avg)) return(invisible(NULL))
+  } else {
+    avg <- get_avg_expr(seurat_obj, layer = layer, assay = "SCT")
+    if (is.null(avg)) return(invisible(NULL))
+  }
 
   df      <- as.data.frame(avg)
   df$gene <- rownames(df)
   df      <- df[, c("gene", setdiff(colnames(df), "gene")), drop = FALSE]
 
+  make_dir(output_dir)
   write_table(df,
     file.path(output_dir,
               paste0("AvgExpr_", layer, "_", file_prefix,
@@ -229,8 +477,29 @@ save_pseudobulk_counts <- function(seurat_obj, output_dir, file_prefix,
                                     condition_col  = "condition") {
   if (!group_by_col %in% colnames(seurat_obj@meta.data)) return(invisible(NULL))
   
-  sample_col <- if ("sample" %in% colnames(seurat_obj@meta.data)) "sample" else if ("orig.ident" %in% colnames(seurat_obj@meta.data)) "orig.ident" else NULL
-  if (is.null(sample_col)) return(invisible(NULL))
+  sample_col <- if ("sample" %in% colnames(seurat_obj@meta.data)) {
+    "sample"
+  } else if ("orig.ident" %in% colnames(seurat_obj@meta.data)) {
+    "orig.ident"
+  } else {
+    NULL
+  }
+  if (is.null(sample_col)) {
+    message("   [SKIP Pseudobulk] Sample metadata is not available.")
+    return(invisible(NULL))
+  }
+
+  if (!"RNA" %in% names(seurat_obj@assays)) {
+    message("   [SKIP Pseudobulk] RNA assay is not available.")
+    return(invisible(NULL))
+  }
+
+  available_layers <- tryCatch(SeuratObject::Layers(seurat_obj[["RNA"]]),
+                              error = function(e) character(0))
+  if (!"counts" %in% available_layers) {
+    message("   [SKIP Pseudobulk] RNA counts layer is not available.")
+    return(invisible(NULL))
+  }
 
   n_reps <- length(unique(stats::na.omit(seurat_obj@meta.data[[sample_col]])))
   if (n_reps < min_replicates) {
@@ -257,21 +526,16 @@ save_pseudobulk_counts <- function(seurat_obj, output_dir, file_prefix,
       return(invisible(NULL))
     }
 
-    reps_per_cond <- table(sc$condition)
-    if (any(reps_per_cond < 2L)) {
-      message("   [WARNING] Pseudobulk: condition(s) with a single sample (",
-              paste(names(reps_per_cond)[reps_per_cond < 2L], collapse = ", "),
-              ") -- the table is written but cannot support a replicate-based comparison.")
-    }
   }
 
-  seurat_obj$pseudobulk_group <- paste(seurat_obj@meta.data[[group_by_col]],
-                                       seurat_obj@meta.data[[sample_col]], sep = "_")
-  Seurat::Idents(seurat_obj) <- "pseudobulk_group"
-
   agg <- safe_run({
-    Seurat::AggregateExpression(seurat_obj, assays = "RNA",
-                                layer = "counts", return.seurat = FALSE)[["RNA"]]
+    .with_seurat_aggregate_advisory_muffled(Seurat::AggregateExpression(
+      seurat_obj,
+      assays = "RNA",
+      group.by = c(group_by_col, sample_col),
+      return.seurat = FALSE,
+      verbose = FALSE
+    )[["RNA"]])
   }, label = "Pseudobulk AggregateExpression")
 
   if (is.null(agg)) return(invisible(NULL))
@@ -280,6 +544,7 @@ save_pseudobulk_counts <- function(seurat_obj, output_dir, file_prefix,
   df$gene <- rownames(df)
   df <- df[, c("gene", setdiff(colnames(df), "gene")), drop = FALSE]
 
+  make_dir(output_dir)
   write_table(df,
     file.path(output_dir,
               paste0("PseudobulkCounts_", file_prefix, "_by_", group_by_col, ".txt")),
@@ -360,6 +625,7 @@ run_scproportion_test <- function(seurat_obj,
   if (!grouping_col %in% colnames(md)) return(invisible(NULL))
   if (!"sample" %in% colnames(md)) return(invisible(NULL))
   if (!"condition" %in% colnames(md)) return(invisible(NULL))
+  make_dir(output_dir)
 
   conditions <- as.character(unique(md$condition))
   if (length(conditions) != 2) {
@@ -447,11 +713,31 @@ run_gene_correlations <- function(seurat_obj,
                                   global_plot = TRUE,
                                   assay = "RNA") {
 
+  md_cols <- colnames(seurat_obj@meta.data)
+  missing_meta <- setdiff(c(grouping_col, cond_col), md_cols)
+  if (length(missing_meta)) {
+    message("   [SKIP Correlation] Missing metadata: ",
+            paste(missing_meta, collapse = ", "))
+    return(invisible(NULL))
+  }
+  if (!assay %in% names(seurat_obj@assays)) {
+    message("   [SKIP Correlation] Assay '", assay, "' is not available.")
+    return(invisible(NULL))
+  }
+  if (!method %in% c("pearson", "spearman", "kendall")) {
+    stop("`method` must be one of 'pearson', 'spearman', or 'kendall'.",
+         call. = FALSE)
+  }
+
   message("--- Starting gene correlation analysis (Grouping: ", grouping_col, ") ---")
   message("   Using assay: ", assay)
 
   Seurat::DefaultAssay(seurat_obj) <- assay
-  corr_dir <- file.path(out_dir, "Correlation")
+  corr_dir <- if (identical(basename(out_dir), "Correlation")) {
+    out_dir
+  } else {
+    file.path(out_dir, "Correlation")
+  }
   if (!dir.exists(corr_dir)) dir.create(corr_dir, recursive = TRUE)
 
   groups <- unique(as.character(seurat_obj@meta.data[[grouping_col]]))
@@ -505,6 +791,11 @@ run_gene_correlations <- function(seurat_obj,
 
   if (length(valid_genes_x) < 1 || length(valid_genes_y) < 1) {
     message(" -> Skipping Correlation: At least one gene set is empty after filtering.")
+    return(invisible(NULL))
+  }
+
+  if (length(colnames(expr)) < 2L && global_plot) {
+    message("   [SKIP Correlation] Fewer than two cells are available.")
     return(invisible(NULL))
   }
 

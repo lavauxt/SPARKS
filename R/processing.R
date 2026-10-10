@@ -440,15 +440,26 @@ run_seurat_processing <- function(seurat_obj,
   # Prep has to run here -- afterwards it can no longer run at all.
   # (run_analysis_unit() used to skip it as "not required" on every run.)
   # No-op for a single model; a failure is reported but not fatal.
+  prep_status <- if (!isTRUE(prep_sct_findmarkers)) "disabled" else "not_applicable"
   if (isTRUE(prep_sct_findmarkers) && inherits(seurat_obj[["SCT"]], "SCTAssay")) {
     message("   [SCTransform] Running PrepSCTFindMarkers (", length(levels(seurat_obj[["SCT"]])),
             " SCT model(s))...")
-    seurat_obj <- safe_run(
-      Seurat::PrepSCTFindMarkers(seurat_obj, assay = "SCT", verbose = FALSE),
-      label    = "PrepSCTFindMarkers",
-      fallback = seurat_obj
+    prep_result <- tryCatch(
+      list(object = Seurat::PrepSCTFindMarkers(
+        seurat_obj, assay = "SCT", verbose = FALSE
+      ), status = "succeeded"),
+      error = function(e) {
+        message("   [WARNING] PrepSCTFindMarkers failed: ", conditionMessage(e))
+        list(object = seurat_obj, status = "failed")
+      }
     )
+    seurat_obj <- prep_result$object
+    prep_status <- prep_result$status
+  } else if (isTRUE(prep_sct_findmarkers)) {
+    prep_status <- "not_applicable_no_sct_models"
+    message("   [INFO] PrepSCTFindMarkers not applicable: SCT assay has no SCT models.")
   }
+  seurat_obj@misc$sparks_prep_sct_findmarkers <- prep_status
 
   if (!inherits(seurat_obj[["SCT"]], "Assay5")) {
     seurat_obj[["SCT"]] <- methods::as(seurat_obj[["SCT"]], "Assay5")

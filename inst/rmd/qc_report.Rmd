@@ -4,6 +4,7 @@ author: "`r params$author`"
 date: "`r Sys.Date()`"
 output:
   html_document:
+    self_contained: true
     toc: true
     toc_float: true
     theme: flatly
@@ -15,6 +16,8 @@ params:
   title: "QC Report"
   out_dir: "."
   cfg: NULL
+  run_files: NULL
+  log_path: NULL
 ---
 
 ```{r setup, include=FALSE}
@@ -44,27 +47,35 @@ cfg    <- params$cfg   # may be NULL when report is rendered standalone
 ## Summary of the dataset
 
 ```{r summary}
-total_cells       <- ncol(obj)
-total_genes       <- nrow(obj)
-cells_by_sample   <- table(obj$orig.ident)
-cells_by_condition <- table(obj$condition)
+total_cells <- ncol(obj)
+total_genes <- nrow(obj)
+cells_by_sample <- if ("orig.ident" %in% colnames(obj[[]])) table(obj$orig.ident) else integer(0)
+cells_by_condition <- if ("condition" %in% colnames(obj[[]])) table(obj$condition) else integer(0)
 ```
 
 | Metric                | Value                                          |
 |-----------------------|------------------------------------------------|
 | **Total cells**       | `r total_cells`                                |
 | **Total genes**       | `r total_genes`                                |
-| **Samples**           | `r length(unique(obj$orig.ident))`             |
-| **Conditions**        | `r length(unique(obj$condition))`              |
+| **Samples**           | `r if ("orig.ident" %in% colnames(obj[[]])) length(unique(obj$orig.ident)) else "Not available"` |
+| **Conditions**        | `r if ("condition" %in% colnames(obj[[]])) length(unique(obj$condition)) else "Not available"` |
 
 **Cells per sample:**
 ```{r cells-by-sample, results='asis'}
-print(kable(as.data.frame(cells_by_sample), col.names = c("Sample", "Number of cells")))
+if (length(cells_by_sample)) {
+  print(kable(as.data.frame(cells_by_sample), col.names = c("Sample", "Number of cells")))
+} else {
+  cat("_(Sample metadata not available.)_\n")
+}
 ```
 
 **Cells per condition:**
 ```{r cells-by-condition, results='asis'}
-print(kable(as.data.frame(cells_by_condition), col.names = c("Condition", "Number of cells")))
+if (length(cells_by_condition)) {
+  print(kable(as.data.frame(cells_by_condition), col.names = c("Condition", "Number of cells")))
+} else {
+  cat("_(Condition metadata not available.)_\n")
+}
 ```
 
 ## Input data
@@ -105,7 +116,7 @@ if (!is.null(cfg)) {
     ),
     stringsAsFactors = FALSE
   )
-  kable(params_df)
+  print(kable(params_df))
 } else {
   cat("_(Config not available – run via `sparks()` to populate this section.)_\n")
 }
@@ -116,15 +127,26 @@ Doublet removal used scDblFinder. Per-sample stats are in `QC/Doublet_Removed_*.
 ## QC metrics after filtering
 
 ```{r qc-violin, fig.width=12, fig.height=5}
-p1 <- VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
-              ncol = 3, pt.size = 0.1)
-print(p1)
+qc_features <- intersect(c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+                          colnames(obj[[]]))
+if (length(qc_features)) {
+  print(VlnPlot(obj, features = qc_features, ncol = min(3L, length(qc_features)),
+                pt.size = 0.1))
+} else {
+  cat("QC metric columns are not available in this object.\n")
+}
 ```
 
 ```{r qc-scatter, fig.width=12, fig.height=5}
-p2 <- FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
-p3 <- FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
-print(p2 + p3)
+scatter_features <- intersect(c("nCount_RNA", "percent.mt", "nFeature_RNA"),
+                              colnames(obj[[]]))
+if (all(c("nCount_RNA", "percent.mt", "nFeature_RNA") %in% scatter_features)) {
+  p2 <- FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+  p3 <- FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+  print(p2 + p3)
+} else {
+  cat("Scatter plot metadata is not available.\n")
+}
 ```
 
 ## Doublet detection
@@ -159,11 +181,40 @@ if (!"S.Score" %in% colnames(obj[[]]) && !"Assigned_Sex" %in% colnames(obj[[]]))
 
 ## Clustering overview
 
-Number of clusters: `r length(unique(obj$seurat_clusters))`
+Number of clusters: `r if ("seurat_clusters" %in% colnames(obj[[]])) length(unique(obj$seurat_clusters)) else "Not available"`
 
 ```{r umap, fig.width=8, fig.height=6}
-DimPlot(obj, reduction = "umap", group.by = "seurat_clusters", label = TRUE) +
-  ggtitle(paste("UMAP -", group))
+if (!"seurat_clusters" %in% colnames(obj[[]])) {
+  cat("Cluster metadata is not available.\n")
+} else if (!"umap" %in% names(obj@reductions)) {
+  cat("UMAP reduction is not available.\n")
+} else {
+  print(DimPlot(obj, reduction = "umap", group.by = "seurat_clusters", label = TRUE) +
+          ggtitle(paste("UMAP -", group)))
+}
+```
+
+## Pipeline diagnostics
+
+```{r diagnostics, results='asis'}
+if (!is.null(params$log_path) && file.exists(params$log_path)) {
+  log_lines <- readLines(params$log_path, warn = FALSE)
+  diagnostics <- grep("\\[(WARNING|ERROR)\\]", log_lines, value = TRUE)
+  skips <- grep("\\[SKIP", log_lines, value = TRUE)
+  if (length(diagnostics) || length(skips)) {
+    diagnostic_df <- data.frame(
+      Type = c(rep("Warning/error", length(diagnostics)),
+               rep("Skipped/unavailable", length(skips))),
+      Message = c(diagnostics, skips),
+      stringsAsFactors = FALSE
+    )
+    print(kable(diagnostic_df))
+  } else {
+    cat("No warnings, errors, or skipped analyses were logged.")
+  }
+} else {
+  cat("Pipeline log is not available.")
+}
 ```
 
 ## Session info

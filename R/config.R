@@ -150,6 +150,26 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$deg$table_quote           <- cfg$deg$table_quote           %||% FALSE
   cfg$deg$table_row_names       <- cfg$deg$table_row_names       %||% FALSE
 
+  cfg$expression$layers <- cfg$expression$layers %||%
+    cfg$deg$avg_expression_layers
+  cfg$proportions$run <- cfg$proportions$run %||% TRUE
+
+  cfg$pseudobulk$run <- cfg$pseudobulk$run %||% FALSE
+  cfg$pseudobulk$save_counts <- cfg$pseudobulk$save_counts %||% TRUE
+  cfg$pseudobulk$min_replicates <- cfg$pseudobulk$min_replicates %||% 2L
+  if (cfg$pseudobulk$min_replicates < 2L) {
+    stop("pseudobulk$min_replicates must be at least 2.", call. = FALSE)
+  }
+
+  cfg$gsea$run <- cfg$gsea$run %||% TRUE
+  cfg$gsea$collection <- cfg$gsea$collection %||% "H"
+  cfg$gsea$min_size <- cfg$gsea$min_size %||% 10L
+  cfg$gsea$max_size <- cfg$gsea$max_size %||% 500L
+  if (cfg$gsea$min_size < 1L || cfg$gsea$max_size < cfg$gsea$min_size) {
+    stop("gsea$min_size must be >= 1 and gsea$max_size must be >= min_size.",
+         call. = FALSE)
+  }
+
   cfg$plot$top_genes_heatmap_n  <- cfg$plot$top_genes_heatmap_n  %||% 10L
   cfg$plot$umap_width_standard  <- cfg$plot$umap_width_standard  %||% 14
   cfg$plot$umap_height_standard <- cfg$plot$umap_height_standard %||% 7

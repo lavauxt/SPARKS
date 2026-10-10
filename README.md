@@ -26,7 +26,7 @@ Species currently supported: **Human** and **Mouse**.
 - **Flexible Input**: Supports both 10X Genomics (Cell Ranger) and Alevin output formats.
 - **Comprehensive QC**: Automated filtering based on mitochondrial content, feature counts, and doublet detection.
 - **Cell Type Annotation**: Integrated SingleR support with customizable reference datasets.
-- **Pathway Enrichment**: Built-in support for GSEA/ssGSEA/UCell analysis via MSigDB.
+- **Pathway Analysis**: Optional per-cell pathway scoring with `escape`, plus ranked MSigDB Hallmark GSEA from replicate-level edgeR pseudobulk statistics.
 - **Advanced Scoring**: Built-in modules for sex scoring and cell cycle regression.
 - **Subset Analysis**: Targeted re-clustering and analysis for specific cell populations defined in the config.
 
@@ -243,6 +243,30 @@ re-clustering, and sub-population profiling.
       genes: ["Ccl19", "Cxcl13"]         # Subpopulation targeted gene expression tracking set
       label_rules: []                    # Optional rule modifiers
 ```
+## Differential expression and pathway analysis
+
+The default `deg$run: true` retains the existing cell-level Seurat Wilcoxon
+comparison. Since cells are not biological replicates, use this as exploratory
+cell-level analysis rather than replicate-level inference. Set `pseudobulk$run:
+true` to additionally fit edgeR quasi-likelihood models to raw RNA counts summed
+by biological sample and group. This requires at least two samples per condition
+by default; designs that do not meet the requirements are skipped with a reason.
+
+Ranked Hallmark GSEA (`gsea$run: true` by default) uses those edgeR pseudobulk
+statistics. It does not fall back to cell-level ranks. If edgeR, `fgsea`,
+Hallmark sets, or a valid replicate design is unavailable, the log reports why
+GSEA was skipped. Per-cell `escape` scoring is a separate analysis controlled
+by `escape$run`; its default library is Hallmark (`H`). Harmony remains the
+batch-integration method for clustering and is not a differential-expression or
+enrichment test.
+
+Analysis outputs use separate sibling folders under each grouping: `DEG/`,
+`Pseudobulk/`, `Expression/`, `Proportions/`, `Correlation/`, and `GSEA/`.
+Each run also records console messages in `pipeline.log` and writes genuine R
+warnings to `warnings.txt`; the HTML reports include the current run's available
+analysis tables and a concise diagnostics section. Older table files are not
+mistaken for current-run results.
+
 ## Output Structure
 
 The pipeline generates an organized results directory:

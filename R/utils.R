@@ -95,6 +95,45 @@ safe_run <- function(expr, label = "Task", fallback = NULL) {
   if (length(found) > 0L) found[[1L]] else NULL
 }
 
+.with_seurat_aggregate_advisory_muffled <- function(expr) {
+  withCallingHandlers(expr, message = function(m) {
+    if (grepl("As of Seurat v5, we recommend using AggregateExpression",
+              conditionMessage(m), fixed = TRUE)) {
+      invokeRestart("muffleMessage")
+    }
+  })
+}
+
+.snapshot_result_files <- function(root) {
+  files <- list.files(root, recursive = TRUE, full.names = TRUE,
+                      all.files = TRUE, no.. = TRUE)
+  files <- files[file.info(files)$isdir %in% FALSE]
+  report_tables <- grepl(
+    "^(AllMarkers|DEG_Counts_|AvgExpr_|Proportions_|PseudobulkDEG_|PseudobulkCounts_|GSEA_|Correlations_)",
+    basename(files)
+  )
+  files <- files[report_tables]
+  files <- normalizePath(files, winslash = "/", mustWork = FALSE)
+  info <- file.info(files)
+  snapshot <- data.frame(size = info$size, mtime = info$mtime,
+                         checksum = unname(tools::md5sum(files)))
+  rownames(snapshot) <- files
+  snapshot
+}
+
+.changed_result_files <- function(snapshot, root) {
+  current <- .snapshot_result_files(root)
+  if (nrow(current) == 0L) return(character(0))
+  old <- match(rownames(current), rownames(snapshot))
+  is_new <- is.na(old)
+  changed <- rep(FALSE, length(old))
+  changed[!is_new] <- current$size[!is_new] != snapshot$size[old[!is_new]] |
+    current$mtime[!is_new] != snapshot$mtime[old[!is_new]] |
+    current$checksum[!is_new] != snapshot$checksum[old[!is_new]]
+  normalizePath(rownames(current)[is_new | changed], winslash = "/",
+                mustWork = FALSE)
+}
+
 #' Save a plot to PNG using ggsave or base R for pheatmap/gtable
 #' @param p Plot object (ggplot or gtable)
 #' @param filename Character. Output file path
@@ -158,13 +197,11 @@ get_valid_groups <- function(meta, col, min_cells = 3L) {
 #' @param layer Character. "data" or "counts"
 #' @return Matrix of average expression or NULL
 #' @export
-get_avg_expr <- function(seurat_obj, layer = "data") {
-  safe_run({
-    suppressWarnings(
-      Seurat::AverageExpression(seurat_obj, assays = "SCT",
-                                layer = layer, return.seurat = FALSE)[["SCT"]]
-    )
-  }, label = "AverageExpression")
+get_avg_expr <- function(seurat_obj, layer = "data", assay = "SCT") {
+  safe_run(.with_seurat_aggregate_advisory_muffled(
+    Seurat::AverageExpression(seurat_obj, assays = assay,
+                              layer = layer, return.seurat = FALSE)[[assay]]
+  ), label = "AverageExpression")
 }
 
 #' Filter requested genes to those present in the object
@@ -273,10 +310,15 @@ get_junk_pattern <- function(species = "Mouse") {
 
 .make_analysis_dirs <- function(group_dir) {
   dirs <- list(
-    UMAP    = file.path(group_dir, "UMAP"),
-    DEG     = file.path(group_dir, "DEG"),
-    VlnPlot = file.path(group_dir, "VlnPlot"),
-    Heatmap = file.path(group_dir, "Heatmap")
+    UMAP        = file.path(group_dir, "UMAP"),
+    DEG         = file.path(group_dir, "DEG"),
+    Correlation = file.path(group_dir, "Correlation"),
+    Pseudobulk  = file.path(group_dir, "Pseudobulk"),
+    Expression  = file.path(group_dir, "Expression"),
+    Proportions = file.path(group_dir, "Proportions"),
+    VlnPlot     = file.path(group_dir, "VlnPlot"),
+    Heatmap     = file.path(group_dir, "Heatmap"),
+    GSEA        = file.path(group_dir, "GSEA")
   )
   lapply(dirs, make_dir)
   dirs
@@ -304,6 +346,16 @@ get_junk_pattern <- function(species = "Mouse") {
   env
 }
 
+.render_report <- function(template, output_file, params) {
+  rmarkdown::render(
+    input = template,
+    output_file = output_file,
+    params = params,
+    envir = .report_env(),
+    quiet = TRUE
+  )
+}
+
 #' Generate an HTML QC report for a processed Seurat object
 #'
 #' The report is always written to \code{out_dir} (the group's QC folder).
@@ -322,7 +374,9 @@ generate_qc_report <- function(seurat_obj, comp_group, out_dir,
                                author       = "Pipeline",
                                title        = NULL,
                                rmd_template = NULL,
-                               cfg          = NULL) {
+                               cfg          = NULL,
+                               run_files = NULL,
+                               log_path = NULL) {
 
   if (!requireNamespace("rmarkdown", quietly = TRUE))
     stop("Package 'rmarkdown' is needed. Please install it: install.packages('rmarkdown')")
@@ -341,19 +395,19 @@ generate_qc_report <- function(seurat_obj, comp_group, out_dir,
     mustWork = FALSE
   )
 
-  rmarkdown::render(
-    input       = rmd_template,
+  .render_report(
+    template = rmd_template,
     output_file = output_file,
-    params      = list(
+    params = list(
       seurat_obj = seurat_obj,
       comp_group = comp_group,
       author     = author,
       title      = title,
       out_dir    = normalizePath(out_dir, mustWork = FALSE),
-      cfg        = cfg
-    ),
-    envir = .report_env(),
-    quiet = FALSE
+      cfg        = cfg,
+      run_files = run_files,
+      log_path = log_path
+    )
   )
 
   message("   QC report saved to: ", output_file)
@@ -382,7 +436,9 @@ generate_results_report <- function(seurat_obj, comp_group, out_dir,
                                     author       = "Pipeline",
                                     title        = NULL,
                                     rmd_template = NULL,
-                                    cfg          = NULL) {
+                                    cfg          = NULL,
+                                    run_files = NULL,
+                                    log_path = NULL) {
 
   if (!requireNamespace("rmarkdown", quietly = TRUE))
     stop("Package 'rmarkdown' is needed. Please install it: install.packages('rmarkdown')")
@@ -402,20 +458,20 @@ generate_results_report <- function(seurat_obj, comp_group, out_dir,
     mustWork = FALSE
   )
 
-  rmarkdown::render(
-    input       = rmd_template,
+  .render_report(
+    template = rmd_template,
     output_file = output_file,
-    params      = list(
+    params = list(
       seurat_obj = seurat_obj,
       comp_group = comp_group,
       author     = author,
       title      = title,
       out_dir    = normalizePath(out_dir, mustWork = FALSE),
       cfg        = cfg,
-      groupings  = groupings
-    ),
-    envir = .report_env(),
-    quiet = FALSE
+      groupings  = groupings,
+      run_files = run_files,
+      log_path = log_path
+    )
   )
 
   message("   Results report saved to: ", output_file)

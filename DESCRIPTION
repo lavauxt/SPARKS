@@ -58,7 +58,11 @@ Suggests:
     plotly,
     htmltools,
     RColorBrewer,
-    presto
+    presto,
+    edgeR,
+    fgsea,
+    GSEABase,
+    testthat (>= 3.0.0)
 Remotes:
     rpolicastro/scProportionTest,
     BorchLab/escape,

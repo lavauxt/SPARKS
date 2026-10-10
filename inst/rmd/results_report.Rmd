@@ -1,0 +1,672 @@
+---
+title:  "`r params$title`"
+author: "`r params$author`"
+date:   "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    theme:          flatly
+    highlight:      tango
+    toc:            true
+    toc_float:
+      collapsed:    false
+      smooth_scroll: true
+    toc_depth:      3
+    number_sections: false
+    self_contained: true    # embed all assets → single portable file
+    code_folding:   hide
+params:
+  seurat_obj: NULL   # fully processed Seurat object
+  comp_group: "Group"
+  author:     "Pipeline User"
+  title:      "SPARKS Results Report"
+  out_dir:    "."
+  cfg:        NULL
+  groupings:  NULL   # character vector of metadata columns to iterate over
+  run_files: NULL
+  log_path: NULL
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center"
+)
+
+# ── Packages ──────────────────────────────────────────────────────────────────
+required_pkgs <- c("Seurat", "SeuratObject", "ggplot2", "dplyr",
+                   "scales", "tidyr", "knitr")
+
+missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace,
+                                      quietly = TRUE, FUN.VALUE = logical(1))]
+if (length(missing_pkgs) > 0L) {
+  stop("Missing packages required for the results report: ",
+       paste(missing_pkgs, collapse = ", "),
+       "\nInstall them with install.packages(c(",
+       paste0('"', missing_pkgs, '"', collapse = ", "), "))")
+}
+
+library(ggplot2)
+library(dplyr)
+has_plotly <- requireNamespace("plotly", quietly = TRUE)
+has_dt <- requireNamespace("DT", quietly = TRUE)
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+# `%||%` is exported by SPARKS but is not on the search path when the package is
+# only loaded (SPARKS::sparks()), and base R only has it from 4.4.0.
+if (!exists("%||%", mode = "function")) {
+  `%||%` <- function(lhs, rhs) if (is.null(lhs) || length(lhs) == 0L) rhs else lhs
+}
+
+.col_exists <- function(obj, col) col %in% colnames(obj@meta.data)
+
+.nice_dt <- function(df, caption = NULL, page_len = 15, ...) {
+  if (!has_dt) {
+    return(knitr::kable(df, caption = caption, row.names = FALSE))
+  }
+  DT::datatable(
+    df,
+    caption    = caption,
+    rownames   = FALSE,
+    filter     = "top",
+    extensions = c("Buttons", "Scroller"),
+    options    = list(
+      pageLength = page_len,
+      scrollX    = TRUE,
+      dom        = "Bfrtip",
+      buttons    = c("copy", "csv", "excel"),
+      ...
+    ),
+    class = "compact stripe hover"
+  )
+}
+
+.umap_plotly <- function(obj, color_by, title = color_by,
+                          point_size = 2, alpha = 0.7) {
+  if (!color_by %in% colnames(obj@meta.data)) return(NULL)
+  emb <- as.data.frame(Seurat::Embeddings(obj, "umap"))
+  colnames(emb) <- c("UMAP_1", "UMAP_2")
+  emb[[color_by]] <- as.character(obj@meta.data[[color_by]])
+  emb$cell        <- rownames(emb)
+
+  # Build a consistent discrete palette
+  lvls <- unique(emb[[color_by]])
+  n    <- length(lvls)
+  pal  <- scales::hue_pal()(n)
+  names(pal) <- lvls
+
+  p <- ggplot(emb, aes(
+      x    = UMAP_1, y = UMAP_2,
+      color = .data[[color_by]],
+      text  = paste0("Cell: ", cell, "<br>", color_by, ": ", .data[[color_by]])
+    )) +
+    geom_point(size = point_size, alpha = alpha) +
+    scale_color_manual(values = pal) +
+    labs(title = title, color = color_by) +
+    theme_minimal(base_size = 11) +
+    theme(legend.title = element_text(size = 9),
+          legend.text  = element_text(size = 8),
+          plot.title   = element_text(size = 12, face = "bold"))
+
+  if (has_plotly) {
+    plotly::ggplotly(p, tooltip = "text") |>
+      plotly::layout(legend = list(itemsizing = "constant")) |>
+      plotly::config(displayModeBar = TRUE, scrollZoom = TRUE)
+  } else {
+    p
+  }
+}
+
+# ── Materialise params ────────────────────────────────────────────────────────
+obj        <- params$seurat_obj
+comp_group <- params$comp_group
+cfg        <- params$cfg
+out_dir    <- params$out_dir
+groupings  <- params$groupings
+run_files <- params$run_files
+
+.current_files <- function(files) {
+  if (length(files) == 0L || is.null(run_files)) return(files)
+  files <- normalizePath(files, winslash = "/", mustWork = FALSE)
+  intersect(files, normalizePath(run_files, winslash = "/", mustWork = FALSE))
+}
+
+# Derive groupings if not provided
+if (is.null(groupings) || length(groupings) == 0L) {
+  singler_cols <- grep("^singleR_labels", colnames(obj@meta.data), value = TRUE)
+  groupings    <- unique(c("seurat_clusters", singler_cols))
+  # BUG FIX: was vapply(groupings, .col_exists, obj, FUN.VALUE = ...), which
+  # passes `obj` as the 2nd argument (`col`) and the grouping name as the 1st
+  # (`obj`) -> "no applicable method for `@` applied to ... character".
+  groupings    <- groupings[vapply(groupings, function(g) .col_exists(obj, g),
+                                   FUN.VALUE = logical(1))]
+}
+```
+
+---
+
+## 1 · Dataset Overview {.tabset}
+
+```{r overview}
+n_cells      <- ncol(obj)
+n_genes      <- nrow(obj)
+n_clusters   <- if (.col_exists(obj, "seurat_clusters"))
+                  length(unique(obj$seurat_clusters)) else NA
+n_conditions <- if (.col_exists(obj, "condition"))
+                  length(unique(obj$condition)) else NA
+n_samples    <- if (.col_exists(obj, "orig.ident"))
+                  length(unique(obj$orig.ident)) else NA
+
+overview_df <- data.frame(
+  Metric = c("Comparison group", "Cells (post-QC)",
+             "Genes", "Clusters", "Conditions", "Samples"),
+  Value  = c(comp_group,
+             format(n_cells,      big.mark = ","),
+             format(n_genes,      big.mark = ","),
+             ifelse(is.na(n_clusters),   "—", n_clusters),
+             ifelse(is.na(n_conditions), "—", n_conditions),
+             ifelse(is.na(n_samples),    "—", n_samples))
+)
+knitr::kable(overview_df, col.names = c("Metric", "Value"),
+             align = c("l", "r"))
+```
+
+```{r qc-params, results='asis'}
+if (!is.null(cfg$qc)) {
+  cat("\n### QC Thresholds Applied\n\n")
+  qcp <- cfg$qc
+  qc_df <- data.frame(
+    Parameter = c("min_features", "max_features", "max_counts",
+                  "max_mt_percent", "min_cells"),
+    Value     = c(qcp$min_features %||% "—", qcp$max_features %||% "—",
+                  qcp$max_counts   %||% "—", qcp$max_mt_percent %||% "—",
+                  qcp$min_cells    %||% "—")
+  )
+  print(knitr::kable(qc_df, col.names = c("Parameter", "Value"), align = c("l","r")))
+}
+```
+
+```{r input-data, results='asis'}
+if (!is.null(cfg$input) && .col_exists(obj, "quant_format")) {
+  cat("\n### Input Data\n\n")
+  fmt_df <- unique(obj@meta.data[, c("orig.ident", "quant_format"), drop = FALSE])
+  colnames(fmt_df) <- c("Sample", "Format")
+  print(knitr::kable(fmt_df, align = c("l", "l")))
+  if (isTRUE(cfg$input$save_raw_matrix)) {
+    cat("\nRaw, pre-QC count matrices were saved per sample under ",
+        "`results_dir/", comp_group, "/RawMatrix/<folder_id>/` in ",
+        cfg$input$raw_matrix_format %||% "mtx", " format.\n", sep = "")
+  }
+}
+```
+
+---
+
+## 2 · Quality Control {.tabset}
+
+### Cell-level metrics
+
+```{r qc-violin, fig.height=5, fig.width=11}
+qc_meta_cols <- intersect(
+  c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+  colnames(obj@meta.data)
+)
+group_col_for_vln <- if (.col_exists(obj, "orig.ident")) "orig.ident" else
+                     if (.col_exists(obj, "condition"))  "condition"  else NULL
+
+if (length(qc_meta_cols) > 0L && !is.null(group_col_for_vln)) {
+  vln_data <- obj@meta.data[, c(qc_meta_cols, group_col_for_vln), drop = FALSE]
+  vln_long <- tidyr::pivot_longer(
+    vln_data,
+    cols       = all_of(qc_meta_cols),
+    names_to   = "Metric",
+    values_to  = "Value"
+  )
+  p <- ggplot(vln_long,
+              aes(x = .data[[group_col_for_vln]], y = Value,
+                  fill = .data[[group_col_for_vln]])) +
+    geom_violin(alpha = 0.7, scale = "width") +
+    geom_boxplot(width = 0.1, outlier.size = 0.3, outlier.alpha = 0.3,
+                 fill = "white", alpha = 0.6) +
+    facet_wrap(~ Metric, scales = "free_y", ncol = 3) +
+    scale_fill_brewer(palette = "Set2") +
+    labs(x = NULL, y = NULL, fill = NULL) +
+    theme_minimal(base_size = 11) +
+    theme(axis.text.x = element_text(angle = 35, hjust = 1),
+          legend.position = "none")
+  if (has_plotly) plotly::ggplotly(p) else p
+} else {
+  cat("> QC metric columns not found in metadata.")
+}
+```
+
+### Per-sample cell counts
+
+```{r qc-counts}
+if (.col_exists(obj, "orig.ident")) {
+  sample_counts <- as.data.frame(table(Sample = obj$orig.ident))
+  colnames(sample_counts) <- c("Sample", "Cells")
+  sample_counts$Cells <- format(sample_counts$Cells, big.mark = ",")
+  .nice_dt(sample_counts, caption = "Cells per sample after QC filtering")
+} else {
+  cat("> orig.ident not found in metadata.")
+}
+```
+
+---
+
+## 3 · Clustering {.tabset}
+
+### UMAP – Clusters
+
+```{r umap-clusters, fig.height=6, fig.width=8}
+.umap_plotly(obj, "seurat_clusters", title = paste("UMAP –", comp_group, "| Clusters"))
+```
+
+### UMAP – Condition
+
+```{r umap-condition, fig.height=6, fig.width=8}
+if (.col_exists(obj, "condition")) {
+  .umap_plotly(obj, "condition", title = paste("UMAP –", comp_group, "| Condition"))
+} else {
+  cat("> 'condition' column not found.")
+}
+```
+
+### Cluster composition table
+
+```{r cluster-table}
+if (.col_exists(obj, "seurat_clusters")) {
+  clu_df <- as.data.frame(table(Cluster = obj$seurat_clusters))
+  colnames(clu_df) <- c("Cluster", "Cells")
+  clu_df$Pct <- paste0(round(100 * clu_df$Cells / sum(clu_df$Cells), 1), " %")
+  .nice_dt(clu_df, caption = "Cluster sizes", page_len = 20)
+}
+```
+
+### Cell proportions by condition
+
+```{r proportion-plot, fig.height=5, fig.width=9}
+if (.col_exists(obj, "seurat_clusters") && .col_exists(obj, "condition")) {
+  prop_df <- obj@meta.data |>
+    dplyr::count(condition, seurat_clusters) |>
+    dplyr::group_by(condition) |>
+    dplyr::mutate(pct = 100 * n / sum(n)) |>
+    dplyr::ungroup()
+
+  p <- ggplot(prop_df,
+              aes(x = condition, y = pct,
+                  fill = factor(seurat_clusters),
+                  text = paste0("Cluster: ", seurat_clusters,
+                                "<br>Condition: ", condition,
+                                "<br>Proportion: ", round(pct, 1), " %"))) +
+    geom_col(position = "stack") +
+    scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+    labs(x = NULL, y = "Cell proportion (%)", fill = "Cluster") +
+    theme_minimal(base_size = 11) +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+  if (has_plotly) plotly::ggplotly(p, tooltip = "text") else p
+}
+```
+
+---
+
+## 4 · Cell Type Annotation {.tabset}
+
+```{r singler-umaps, results='asis', fig.height=6, fig.width=9}
+singler_cols <- grep("^singleR_labels", colnames(obj@meta.data), value = TRUE)
+
+if (length(singler_cols) == 0L) {
+  cat("> No SingleR annotation columns found.\n")
+} else {
+  for (sc in singler_cols) {
+    label_pretty <- gsub("singleR_labels_", "SingleR ", sc)
+    cat("\n### UMAP –", label_pretty, "\n\n")
+    p_sr <- .umap_plotly(obj, sc,
+                         title = paste("UMAP –", comp_group, "|", label_pretty),
+                         point_size = 1.5)
+    if (!is.null(p_sr)) print(p_sr)
+    cat("\n")
+
+    # annotation breakdown table
+    cat("\n#### Annotation breakdown\n\n")
+    ann_df <- as.data.frame(table(CellType = obj@meta.data[[sc]]))
+    colnames(ann_df) <- c("Cell Type", "Cells")
+    ann_df$Pct <- paste0(round(100 * ann_df$Cells / sum(ann_df$Cells), 1), " %")
+    ann_df <- dplyr::arrange(ann_df, dplyr::desc(Cells))
+    print(.nice_dt(ann_df,
+                   caption = paste("Cell type counts –", label_pretty),
+                   page_len = 15))
+    cat("\n")
+  }
+}
+```
+
+---
+
+## 5 · Differential Expression {.tabset}
+
+```{r deg-section, results='asis'}
+# Search only the cell-level DEG folder, excluding pseudobulk outputs.
+deg_pattern <- "^(AllMarkers|DEG_Counts_).*\\.txt$"
+deg_roots   <- list.dirs(out_dir, recursive = TRUE, full.names = TRUE)
+deg_roots   <- deg_roots[basename(deg_roots) == "DEG"]
+deg_files   <- .current_files(unlist(lapply(deg_roots, list.files, pattern = deg_pattern,
+                             full.names = TRUE), use.names = FALSE))
+deg_files   <- deg_files[
+  !grepl("[\\\\/]Pseudobulk[\\\\/]", deg_files)
+]
+
+if (length(deg_files) == 0L) {
+  if (!is.null(cfg$deg$run) && !isTRUE(cfg$deg$run)) {
+    cat("> Cell-level DEG was disabled (`deg$run = FALSE`). Descriptive results may still be available in Expression, Proportions, Pseudobulk, Correlation, and GSEA folders.\n\n")
+  } else {
+    cat("> No cell-level DEG tables are available. This can occur when comparisons had fewer than two conditions, groups had too few cells, or no test results were produced.\n\n")
+  }
+} else {
+  for (deg_f in deg_files) {
+    tab_label <- gsub("AllMarkers_|_|.txt$", " ", basename(deg_f))
+    cat("\n### ", trimws(tab_label), "\n\n")
+
+    deg_tbl <- tryCatch(
+      utils::read.table(deg_f, header = TRUE, sep = "\t",
+                        stringsAsFactors = FALSE, check.names = FALSE),
+      error = function(e) NULL
+    )
+    if (is.null(deg_tbl) || nrow(deg_tbl) == 0L) {
+      cat("> Empty or unreadable file.\n\n")
+      next
+    }
+
+    if (grepl("^DEG_Counts_", basename(deg_f))) {
+      print(.nice_dt(deg_tbl, caption = basename(deg_f), page_len = 20))
+      cat("\n")
+      next
+    }
+
+    # Round numeric columns for readability
+    num_cols <- vapply(deg_tbl, is.numeric, logical(1))
+    deg_tbl[num_cols] <- lapply(deg_tbl[num_cols], round, digits = 4)
+
+    print(.nice_dt(deg_tbl,
+                   caption  = paste("Cell-level DEG –", trimws(tab_label)),
+                   page_len = 20))
+    cat("\n")
+  }
+}
+```
+
+### Average expression
+
+```{r average-expression, results='asis'}
+expr_files <- .current_files(list.files(out_dir, pattern = "^AvgExpr_.*\\.txt$",
+                         recursive = TRUE, full.names = TRUE))
+if (length(expr_files) == 0L) {
+  if (!is.null(cfg$expression$layers) && length(cfg$expression$layers) == 0L) {
+    cat("> Average-expression export was disabled by configuration.\n\n")
+  } else {
+    cat("> Average-expression tables are not available. Check whether configured assay layers were available.\n\n")
+  }
+} else {
+  for (f in expr_files) {
+    tab <- tryCatch(utils::read.delim(f, check.names = FALSE), error = function(e) NULL)
+    cat("\n#### ", basename(f), "\n\n", sep = "")
+    if (is.null(tab) || nrow(tab) == 0L) {
+      cat("> Table unavailable or empty.\n")
+    } else {
+      print(.nice_dt(tab, caption = basename(f), page_len = 20))
+    }
+  }
+}
+```
+
+### Proportion summaries
+
+```{r proportion-tables, results='asis'}
+proportion_files <- .current_files(list.files(out_dir, pattern = "^Proportions_.*\\.txt$",
+                               recursive = TRUE, full.names = TRUE))
+if (length(proportion_files) == 0L) {
+  if (!is.null(cfg$proportions$run) && !isTRUE(cfg$proportions$run)) {
+    cat("> Proportion analysis was disabled.\n\n")
+  } else {
+    cat("> Proportion tables are not available; two or more observed groups and conditions are required. See pipeline.log for details.\n\n")
+  }
+} else {
+  for (f in proportion_files) {
+    tab <- tryCatch(utils::read.delim(f, check.names = FALSE), error = function(e) NULL)
+    cat("\n#### ", basename(f), "\n\n", sep = "")
+    if (is.null(tab) || nrow(tab) == 0L) cat("> Table unavailable or empty.\n") else
+      print(.nice_dt(tab, caption = basename(f), page_len = 20))
+  }
+}
+```
+
+### Replicate-aware pseudobulk DEG
+
+```{r pseudobulk-deg, results='asis'}
+pb_files <- .current_files(list.files(out_dir, pattern = "^PseudobulkDEG_.*\\.txt$",
+                       recursive = TRUE, full.names = TRUE))
+if (length(pb_files) == 0L) {
+  if (!is.null(cfg$pseudobulk$run) && isTRUE(cfg$pseudobulk$run)) {
+    cat("> Pseudobulk DEG was requested, but no results were produced. Check RNA counts, non-empty group/sample combinations, two conditions, replicate counts, and edgeR; see pipeline.log for details.\n\n")
+  } else {
+    cat("> Replicate-aware pseudobulk DEG was not enabled. Existing cell-level DEG uses cells as observations and is reported separately above.\n\n")
+  }
+} else {
+  for (f in pb_files) {
+    tab <- tryCatch(utils::read.delim(f, check.names = FALSE), error = function(e) NULL)
+    if (is.null(tab) || nrow(tab) == 0L) {
+      cat("> Pseudobulk table unavailable or empty: `", basename(f), "`.\n", sep = "")
+    } else {
+      cat("\n#### ", basename(f), "\n\n", sep = "")
+      print(.nice_dt(tab, caption = basename(f), page_len = 20))
+      cat("\n")
+    }
+  }
+}
+```
+
+### Pseudobulk count exports
+
+```{r pseudobulk-counts, results='asis'}
+pb_count_files <- .current_files(list.files(out_dir, pattern = "^PseudobulkCounts_.*\\.txt$",
+                             recursive = TRUE, full.names = TRUE))
+if (length(pb_count_files) == 0L) {
+  if (!is.null(cfg$pseudobulk$save_counts) && !isTRUE(cfg$pseudobulk$save_counts)) {
+    cat("> Pseudobulk count export was disabled.\n\n")
+  } else {
+    cat("> Pseudobulk count export is not available. Check RNA counts, sample metadata, and replicate threshold; see pipeline.log.\n\n")
+  }
+} else {
+  for (f in pb_count_files) {
+    tab <- tryCatch(utils::read.delim(f, check.names = FALSE), error = function(e) NULL)
+    cat("\n#### ", basename(f), "\n\n", sep = "")
+    if (is.null(tab) || nrow(tab) == 0L) cat("> Table unavailable or empty.\n") else
+      print(.nice_dt(utils::head(tab, 100L), caption = paste(basename(f), "(first 100 rows)"), page_len = 20))
+  }
+}
+```
+
+### Ranked GSEA
+
+```{r gsea-results, results='asis'}
+gsea_files <- .current_files(list.files(out_dir, pattern = "^GSEA_.*\\.tsv$",
+                         recursive = TRUE, full.names = TRUE))
+if (length(gsea_files) == 0L) {
+  if (!is.null(cfg$gsea$run) && !isTRUE(cfg$gsea$run)) {
+    cat("> Ranked GSEA was disabled in configuration.\n\n")
+  } else {
+    collection <- cfg$gsea$collection %||% "H"
+    cat("> No ranked GSEA tables for MSigDB collection '", collection,
+        "' are available. GSEA requires edgeR pseudobulk ranks, valid biological replicates in two conditions, and gene sets. Review pipeline.log for the specific skip reason.\n\n", sep = "")
+  }
+} else {
+  for (f in gsea_files) {
+    tab <- tryCatch(utils::read.delim(f, check.names = FALSE), error = function(e) NULL)
+    if (is.null(tab) || nrow(tab) == 0L) {
+      cat("> GSEA table unavailable or empty: `", basename(f), "`.\n", sep = "")
+    } else {
+      cat("\n#### ", basename(f), "\n\n", sep = "")
+      print(.nice_dt(tab, caption = basename(f), page_len = 20))
+      cat("\n")
+    }
+  }
+}
+```
+
+### Gene correlations
+
+```{r correlation-results, results='asis'}
+cor_files <- .current_files(list.files(
+  out_dir, pattern = "^Correlations_.*\\.(tsv|txt)$",
+  recursive = TRUE, full.names = TRUE
+))
+if (length(cor_files) == 0L) {
+  corr_x <- cfg$genes$corr_genes_x %||% NULL
+  corr_y <- cfg$genes$corr_genes_y %||% NULL
+  if (is.null(corr_x) || is.null(corr_y) || !length(corr_x) || !length(corr_y)) {
+    cat("> Correlation analysis was not configured with both gene sets.\n\n")
+  } else {
+    cat("> No correlation tables were produced. Check whether genes were present in RNA data and whether groups met the 30-cell threshold; pipeline.log contains specific skip details.\n\n")
+  }
+} else {
+  for (f in cor_files) {
+    tab <- tryCatch(utils::read.delim(f, check.names = FALSE), error = function(e) NULL)
+    cat("\n#### ", basename(f), "\n\n", sep = "")
+    if (is.null(tab) || nrow(tab) == 0L) cat("> Correlation table unavailable or empty.\n") else
+      print(.nice_dt(tab, caption = basename(f), page_len = 20))
+  }
+}
+```
+
+---
+
+## 6 · Sex & Cell Cycle {.tabset}
+
+### Sex scoring
+
+```{r sex-umap, fig.height=5, fig.width=9}
+sex_col <- "Assigned_Sex"
+# BUG FIX: was "sex_assignment", a column run_sex_scoring() never creates (it
+# writes "Assigned_Sex", see sex_scoring.R) -- this section reported "Sex
+# scoring was not run" on every dataset, even when it had. qc_report.Rmd
+# already looked for "Assigned_Sex" correctly; this file had drifted.
+if (.col_exists(obj, sex_col)) {
+  sex_umap <- .umap_plotly(obj, sex_col,
+                            title = paste("UMAP –", comp_group, "| Sex"))
+  if (!is.null(sex_umap)) sex_umap
+
+  sex_df <- as.data.frame(table(Sex = obj[[sex_col]]))
+  colnames(sex_df) <- c("Sex", "Cells")
+  knitr::kable(sex_df, align = c("l", "r"))
+} else {
+  cat("> Sex scoring was not run or 'Assigned_Sex' column not found.")
+}
+```
+
+### Cell cycle
+
+```{r cycle-umap, fig.height=5, fig.width=9}
+phase_col <- "Phase"
+if (.col_exists(obj, phase_col)) {
+  cycle_umap <- .umap_plotly(obj, phase_col,
+                              title = paste("UMAP –", comp_group, "| Cell Cycle Phase"))
+  if (!is.null(cycle_umap)) cycle_umap
+
+  phase_df <- as.data.frame(table(Phase = obj[[phase_col]]))
+  colnames(phase_df) <- c("Phase", "Cells")
+  knitr::kable(phase_df, align = c("l", "r"))
+} else {
+  cat("> Cell cycle scoring was not run or 'Phase' column not found.")
+}
+```
+
+---
+
+## 7 · Additional Groupings {.tabset}
+
+```{r extra-groupings, results='asis', fig.height=6, fig.width=9}
+extra_cols <- setdiff(groupings, c("seurat_clusters",
+                                    grep("^singleR", groupings, value = TRUE)))
+
+if (length(extra_cols) == 0L) {
+  cat("> No additional grouping columns to display.\n")
+} else {
+  for (ec in extra_cols) {
+    if (!.col_exists(obj, ec)) next
+    label_pretty <- gsub("_", " ", ec)
+    cat("\n### UMAP –", label_pretty, "\n\n")
+    p_ec <- .umap_plotly(obj, ec,
+                         title = paste("UMAP –", comp_group, "|", label_pretty))
+    if (!is.null(p_ec)) print(p_ec)
+    cat("\n")
+  }
+}
+```
+
+---
+
+## 8 · Per-cell pathway scoring {.tabset}
+
+```{r escape-results, results='asis'}
+escape_assays <- grep("^escape\\.", names(obj@assays), value = TRUE)
+if (!length(escape_assays)) {
+  if (!is.null(cfg$escape$run) && !isTRUE(cfg$escape$run)) {
+    cat("> Per-cell pathway scoring was disabled (`escape$run = FALSE`).\n\n")
+  } else {
+    cat("> No escape assay is available. Check the optional escape/msigdb dependencies, gene-set availability, and pipeline.log.\n\n")
+  }
+} else {
+  cat("Available per-cell pathway-score assays: ",
+      paste(escape_assays, collapse = ", "), ".\n\n", sep = "")
+}
+```
+
+---
+
+## Pipeline diagnostics
+
+```{r diagnostics, results='asis'}
+if (!is.null(params$log_path) && file.exists(params$log_path)) {
+  log_lines <- readLines(params$log_path, warn = FALSE)
+  diagnostics <- grep("\\[(WARNING|ERROR)\\]", log_lines, value = TRUE)
+  skips <- grep("\\[SKIP", log_lines, value = TRUE)
+  if (length(diagnostics) || length(skips)) {
+    diagnostic_df <- data.frame(
+      Type = c(rep("Warning/error", length(diagnostics)),
+               rep("Skipped/unavailable", length(skips))),
+      Message = c(diagnostics, skips),
+      stringsAsFactors = FALSE
+    )
+    print(.nice_dt(diagnostic_df, caption = "Pipeline diagnostics", page_len = 20))
+  } else {
+    cat("> No warnings, errors, or skipped analyses were logged.\n")
+  }
+} else {
+  cat("> Pipeline log is not available.\n")
+}
+```
+
+## 9 · Session Info {.tabset}
+
+<details>
+<summary>Click to expand</summary>
+
+```{r session-info}
+si        <- utils::sessionInfo()
+pkg_df    <- do.call(rbind, lapply(si$otherPkgs, function(p)
+  data.frame(Package = p$Package, Version = p$Version, stringsAsFactors = FALSE)))
+pkg_df    <- pkg_df[order(pkg_df$Package), ]
+
+knitr::kable(pkg_df, row.names = FALSE,
+             caption = "Loaded packages at report generation time")
+```
+
+```{r r-version}
+cat("R version:", R.version$version.string, "\n")
+cat("Platform: ", R.version$platform,        "\n")
+cat("Date:     ", format(Sys.time()),         "\n")
+```
+
+</details>

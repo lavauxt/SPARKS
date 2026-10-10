@@ -93,10 +93,21 @@ deg:
   min_deg_display:      10
   avg_expression_layers:
     - "data"
-    - "counts"
   table_sep:       "\t"
   table_quote:     false
   table_row_names: false
+
+# ── Replicate-aware pseudobulk and ranked GSEA ─────────────────────────────────
+pseudobulk:
+  run: false                 # optional edgeR quasi-likelihood DEG by biological sample
+  save_counts: true          # export RNA counts summed by grouping x sample
+  min_replicates: 2          # required samples per condition for edgeR/GSEA
+
+gsea:
+  run: true                  # ranked Hallmark GSEA from edgeR pseudobulk statistics
+  collection: "H"            # MSigDB Hallmark
+  min_size: 10
+  max_size: 500
 
 # ── SingleR ────────────────────────────────────────────────────────────────────
 singler:
@@ -139,9 +150,9 @@ plot:
 
 # ── Escape Pathway Enrichment ──────────────────────────────────────────────────
 escape:
-  run:      true
+  run:      false
   method:   "AUCell"   # Options: "ssGSEA", "UCell", "AUCell", "GSVA" # WARNING ssGSEA is demanding
-  library:  ["H", "C5"]        # "H" = Hallmark, "C5" = Gene Ontology, etc.
+  library:  "H"        # per-cell scoring; "H" = Hallmark, "C5" = Gene Ontology, etc.
   min_size: 5
 
 # ── Genes ──────────────────────────────────────────────────────────────────────
