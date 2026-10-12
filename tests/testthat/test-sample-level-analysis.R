@@ -99,6 +99,55 @@ test_that("analysis output folders distinguish analysis types", {
   expect_false(identical(dirs$Pseudobulk, dirs$DEG))
 })
 
+test_that("escape heatmaps handle a single pathway and one grouping level", {
+  skip_if_not_installed("escape")
+
+  object <- suppressWarnings(Seurat::CreateSeuratObject(
+    counts = matrix(
+      1:24, nrow = 2,
+      dimnames = list(c("pathway-a", "pathway-b"), paste0("cell", 1:12))
+    )
+  ))
+  suppressWarnings(object[["escape.UCell"]] <- SeuratObject::CreateAssay5Object(
+    data = Matrix::Matrix(
+      matrix(1:12, nrow = 1,
+             dimnames = list("pathway-a", paste0("cell", 1:12))),
+      sparse = TRUE
+    )
+  ))
+  object$one_group <- "A"
+  out <- tempfile("escape-plots-")
+  on.exit(unlink(out, recursive = TRUE), add = TRUE)
+
+  path <- SPARKS::generate_escape_plots(
+    object, method = "UCell", group_col = "one_group", out_dir = out,
+    prefix = "test"
+  )
+  expect_true(file.exists(path))
+})
+
+test_that("Hallmark escape scoring filters to detected genes for UCell and AUCell", {
+  skip_if_not_installed("escape")
+  skip_if_not_installed("msigdb")
+
+  genes <- c(.hallmark_gene_sets("Human", "H")[[1]], paste0("TEST", 1:270))
+  counts <- matrix(
+    stats::rpois(length(genes) * 20, lambda = 4),
+    nrow = length(genes),
+    dimnames = list(genes, paste0("cell", seq_len(20)))
+  )
+  object <- suppressWarnings(Seurat::CreateSeuratObject(counts = counts))
+  object <- Seurat::NormalizeData(object, verbose = FALSE)
+
+  for (method in c("UCell", "AUCell")) {
+    scored <- SPARKS::run_escape_enrichment(
+      object, species = "Human", library = "H", method = method,
+      min_size = 5L
+    )
+    expect_true(paste0("escape.", method) %in% names(scored@assays))
+  }
+})
+
 test_that("report file tracking excludes stale result tables", {
   root <- tempfile("result-snapshot-")
   dir.create(file.path(root, "DEG"), recursive = TRUE)

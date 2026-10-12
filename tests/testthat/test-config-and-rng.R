@@ -172,6 +172,7 @@ test_that("results report covers current-run analyses and diagnostics", {
   expect_true(any(grepl("correlation-results", report, fixed = TRUE)))
   expect_true(any(grepl("Pipeline diagnostics", report, fixed = TRUE)))
   expect_true(any(grepl("Per-cell pathway scoring", report, fixed = TRUE)))
+  expect_true(any(grepl("Escape_Heatmap_", report, fixed = TRUE)))
 })
 
 test_that("sample-level and Hallmark analysis config has deliberate defaults", {
@@ -189,4 +190,18 @@ test_that("sample-level and Hallmark analysis config has deliberate defaults", {
   expect_equal(loaded$pseudobulk$min_replicates, 2L)
   expect_true(loaded$gsea$run)
   expect_identical(loaded$gsea$collection, "H")
+})
+
+test_that("an explicitly empty expression layer list disables exports", {
+  cfg <- list(
+    pipeline = list(), qc = list(), processing = list(), deg = list(),
+    plot = list(), species = list(), singler = list(), groupings_main = NULL,
+    expression = list(layers = list())
+  )
+  file <- tempfile(fileext = ".yml")
+  on.exit(unlink(file), add = TRUE)
+  yaml::write_yaml(cfg, file)
+
+  loaded <- SPARKS::load_pipeline_config(file)
+  expect_length(loaded$expression$layers, 0L)
 })

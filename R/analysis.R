@@ -258,30 +258,36 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
       stats <- fit$result$rank_stat
       names(stats) <- fit$result$gene
       stats <- sort(stats[is.finite(stats)], decreasing = TRUE)
-      result <- tryCatch(
-        fgsea::fgseaMultilevel(pathways, stats, minSize = gsea_min_size,
-                               maxSize = min(gsea_max_size, length(stats))),
-        error = function(e) {
-          message("   [SKIP GSEA] ", group, ": ", conditionMessage(e))
-          NULL
-        }
-      )
-      if (!is.null(result) && nrow(result) > 0L) {
-        make_dir(gsea_dir)
-        result$leadingEdge <- vapply(result$leadingEdge, paste,
-                                     collapse = ";", character(1))
-        result$group <- group
-        result$condition_1 <- fit$result$condition_1[1L]
-        result$condition_2 <- fit$result$condition_2[1L]
-        collection_tag <- .safe_filename(collection)
-        utils::write.table(
-          result,
-          file.path(gsea_dir, paste0("GSEA_", collection_tag, "_", file_prefix, "_",
-                                     .safe_filename(group), "_by_", group_col, ".tsv")),
-          sep = "\t", quote = FALSE, row.names = FALSE
+      max_size <- min(gsea_max_size, length(stats) - 1L)
+      if (length(stats) < 2L || max_size < gsea_min_size) {
+        message("   [SKIP GSEA] ", group,
+                ": too few ranked genes for the requested pathway size range.")
+      } else {
+        result <- tryCatch(
+          fgsea::fgseaMultilevel(pathways, stats, minSize = gsea_min_size,
+                                 maxSize = max_size),
+          error = function(e) {
+            message("   [SKIP GSEA] ", group, ": ", conditionMessage(e))
+            NULL
+          }
         )
-      } else if (!is.null(result)) {
-        message("   [SKIP GSEA] ", group, ": no gene sets passed size filters.")
+        if (!is.null(result) && nrow(result) > 0L) {
+          make_dir(gsea_dir)
+          result$leadingEdge <- vapply(result$leadingEdge, paste,
+                                       collapse = ";", character(1))
+          result$group <- group
+          result$condition_1 <- fit$result$condition_1[1L]
+          result$condition_2 <- fit$result$condition_2[1L]
+          collection_tag <- .safe_filename(collection)
+          utils::write.table(
+            result,
+            file.path(gsea_dir, paste0("GSEA_", collection_tag, "_", file_prefix, "_",
+                                       .safe_filename(group), "_by_", group_col, ".tsv")),
+            sep = "\t", quote = FALSE, row.names = FALSE
+          )
+        } else if (!is.null(result)) {
+          message("   [SKIP GSEA] ", group, ": no gene sets passed size filters.")
+        }
       }
     }
   }

@@ -621,6 +621,17 @@ if (!length(escape_assays)) {
   cat("Available per-cell pathway-score assays: ",
       paste(escape_assays, collapse = ", "), ".\n\n", sep = "")
 }
+
+escape_plot_files <- .current_files(list.files(
+  out_dir, pattern = "^Escape_Heatmap_.*\\.png$",
+  recursive = TRUE, full.names = TRUE
+))
+if (length(escape_plot_files)) {
+  for (f in escape_plot_files) {
+    cat("\n#### ", basename(f), "\n\n", sep = "")
+    print(knitr::include_graphics(f))
+  }
+}
 ```
 
 ---

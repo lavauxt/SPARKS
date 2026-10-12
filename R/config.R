@@ -154,8 +154,9 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$deg$table_quote           <- cfg$deg$table_quote           %||% FALSE
   cfg$deg$table_row_names       <- cfg$deg$table_row_names       %||% FALSE
 
-  cfg$expression$layers <- cfg$expression$layers %||%
-    cfg$deg$avg_expression_layers
+  if (is.null(cfg$expression$layers)) {
+    cfg$expression$layers <- cfg$deg$avg_expression_layers
+  }
   cfg$proportions$run <- cfg$proportions$run %||% TRUE
 
   cfg$pseudobulk$run <- cfg$pseudobulk$run %||% FALSE

@@ -28,13 +28,39 @@ run_escape_enrichment <- function(seurat_obj, species = "Mouse", library = "H",
     return(seurat_obj)
   }
 
+  gene_sets <- lapply(gene_sets, unique)
+  expressed_genes <- rownames(SeuratObject::LayerData(
+    seurat_obj, assay = "RNA", layer = "counts"
+  ))
+  gene_sets <- lapply(gene_sets, intersect, y = expressed_genes)
+  gene_sets <- gene_sets[lengths(gene_sets) >= min_size]
+  if (length(gene_sets) == 0L) {
+    message("   [SKIP Escape] No ", library,
+            " gene sets retain at least ", min_size,
+            " genes present in the RNA assay.")
+    return(seurat_obj)
+  }
+
   assay_name <- paste0("escape.", method)
+  original_obj <- seurat_obj
+  if (assay_name %in% names(seurat_obj@assays)) {
+    message("   [INFO Escape] Replacing existing assay '", assay_name, "'.")
+    seurat_obj[[assay_name]] <- NULL
+  }
+  escape_args <- list(
+    input.data = seurat_obj,
+    method = method,
+    new.assay.name = assay_name,
+    gene.sets = gene_sets,
+    min.size = min_size
+  )
+  if (identical(tolower(method), "ucell")) {
+    escape_args$maxRank <- max(1500L, length(expressed_genes))
+  }
   seurat_obj <- safe_run(
-    escape::runEscape(seurat_obj, method = method,
-                      new.assay.name = assay_name,
-                      gene.sets = gene_sets, min.size = min_size),
+    do.call(escape::runEscape, escape_args),
     label = "escape::runEscape",
-    fallback = seurat_obj
+    fallback = original_obj
   )
   if (assay_name %in% names(seurat_obj@assays)) {
     message("   -> Enrichment successful. Assay '", assay_name, "' added.")
@@ -67,19 +93,35 @@ generate_escape_plots <- function(seurat_obj, method = "ssGSEA", group_col,
     return(invisible(NULL))
   }
 
+  score_matrix <- tryCatch(
+    SeuratObject::LayerData(seurat_obj, assay = assay_name, layer = "data"),
+    error = function(e) NULL
+  )
+  if (is.null(score_matrix)) {
+    message("   [SKIP Escape plot] Score data are not available in assay '",
+            assay_name, "'.")
+    return(invisible(NULL))
+  }
+  n_groups <- length(unique(stats::na.omit(
+    as.character(seurat_obj@meta.data[[group_col]])
+  )))
+
   escape_dir <- file.path(out_dir, "Escape")
   make_dir(escape_dir)
   p <- safe_run(
     escape::heatmapEnrichment(seurat_obj, group.by = group_col,
                               assay = assay_name, scale = TRUE,
-                              cluster.rows = TRUE, cluster.columns = TRUE) +
+                              cluster.rows = nrow(score_matrix) > 1L,
+                              cluster.columns = n_groups > 1L) +
       ggplot2::ggtitle(paste0("Enrichment (", method, ") | ", group_col)),
     label = paste0("escape::heatmapEnrichment ", group_col)
   )
   if (!is.null(p)) {
-    save_png(p, file.path(escape_dir,
-                          paste0("Escape_Heatmap_", prefix, "_", group_col, ".png")),
-             width = 10, height = 8)
+    plot_path <- file.path(
+      escape_dir, paste0("Escape_Heatmap_", prefix, "_", group_col, ".png")
+    )
+    save_png(p, plot_path, width = 10, height = 8)
+    return(invisible(plot_path))
   }
   invisible(NULL)
 }
