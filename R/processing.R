@@ -608,16 +608,51 @@ label_cells_by_markers <- function(seurat_obj, new_col_name, rules,
 #' @param ref_celldex1 celldex reference object 1
 #' @param ref_celldex2 celldex reference object 2
 #' @param singler_cfg Named list from config
+#' @param reference_loader Function mapping a celldex function name to its
+#'   reference object. Primarily useful for testing/custom reference providers.
 #' @return Seurat object with annotation columns added
 #' @export
+.safe_load_celldex_reference <- function(ref_name, loader = function(name) {
+  do.call(getExportedValue("celldex", name), args = list())
+}) {
+  tryCatch(
+    loader(ref_name),
+    error = function(e) {
+      message("   [SKIP SingleR reference] '", ref_name,
+              "' could not be loaded: ", conditionMessage(e))
+      NULL
+    }
+  )
+}
+
+.load_singler_references <- function(ref_primary_name, ref_secondary_name,
+                                    loader = function(name) {
+                                      do.call(getExportedValue("celldex", name),
+                                              args = list())
+                                    }) {
+  list(
+    primary = .safe_load_celldex_reference(ref_primary_name, loader),
+    secondary = .safe_load_celldex_reference(ref_secondary_name, loader)
+  )
+}
+
 run_singler_annotation <- function(seurat_obj, species_target, ref_celldex1, ref_celldex2,
-                                    singler_cfg) {
+                                    singler_cfg,
+                                    reference_loader = function(name) {
+                                      do.call(getExportedValue("celldex", name),
+                                              args = list())
+                                    }) {
   message("--- Starting SingleR annotation ---")   
   Seurat::DefaultAssay(seurat_obj) <- "SCT"
   sr_data <- Seurat::GetAssayData(seurat_obj, assay = "SCT", layer = "data")
   
-  ref_primary <- do.call(getExportedValue("celldex", ref_celldex1), args = list())
-  ref_secondary <- do.call(getExportedValue("celldex", ref_celldex2), args = list())
+  # Load each reference independently: a broken HDF5 cache for one celldex
+  # reference must not prevent annotation with the other reference.
+  references <- .load_singler_references(
+    ref_celldex1, ref_celldex2, loader = reference_loader
+  )
+  ref_primary <- references$primary
+  ref_secondary <- references$secondary
 
   unassigned <- singler_cfg$unassigned_label
   min_cells  <- singler_cfg$min_cells_per_group
@@ -625,16 +660,16 @@ run_singler_annotation <- function(seurat_obj, species_target, ref_celldex1, ref
   for (lt in singler_cfg$labels) {
     message("   SingleR: ", lt$name)
 
-    sr1 <- safe_run(
+    sr1 <- if (!is.null(ref_primary)) safe_run(
       SingleR::SingleR(test   = sr_data, ref = ref_primary,
                        labels = ref_primary[[lt$ref_field]]),
       label = paste0("SingleR primary (", lt$name, ")")
-    )
-    sr2 <- safe_run(
+    ) else NULL
+    sr2 <- if (!is.null(ref_secondary)) safe_run(
       SingleR::SingleR(test   = sr_data, ref = ref_secondary,
                        labels = ref_secondary[[lt$ref_field]]),
       label = paste0("SingleR secondary (", lt$name, ")")
-    )
+    ) else NULL
 
     if (is.null(sr1) && is.null(sr2)) {
       message("   [SKIP] SingleR failed for: ", lt$name)
