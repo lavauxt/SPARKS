@@ -4,7 +4,7 @@
 \alias{get_avg_expr}
 \title{Get Average Expression wrapper}
 \usage{
-get_avg_expr(seurat_obj, layer = "data")
+get_avg_expr(seurat_obj, layer = "data", assay = "SCT")
 }
 \arguments{
 \item{seurat_obj}{Seurat object}

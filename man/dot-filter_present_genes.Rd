@@ -4,7 +4,7 @@
 \alias{.filter_present_genes}
 \title{Filter requested genes to those present in the object}
 \usage{
-.filter_present_genes(genes, seurat_obj, context = "")
+.filter_present_genes(genes, seurat_obj, context = "", assay = NULL)
 }
 \arguments{
 \item{genes}{Character vector}

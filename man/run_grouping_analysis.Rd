@@ -12,7 +12,11 @@ run_grouping_analysis(
   base_dir,
   suffix,
   deg_color,
-  cfg
+  cfg,
+  gsea_pathways = NULL,
+  gsea_plot_projection = TRUE,
+  gsea_projection_top_n = 10L,
+  skip_cell_deg = FALSE
 )
 }
 \arguments{

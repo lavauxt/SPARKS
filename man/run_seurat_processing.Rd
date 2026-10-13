@@ -12,7 +12,9 @@ run_seurat_processing(
   vars_to_regress = "percent.mt",
   split_by = "orig.ident",
   prep_sct_findmarkers = TRUE,
-  seed = 2861L
+  seed = 2861L,
+  run_tsne = FALSE,
+  tsne_perplexity = 30
 )
 }
 \arguments{
@@ -35,6 +37,11 @@ conversion below discards the per-sample SCT models it needs. No-op with a
 single sample.}
 
 \item{seed}{Non-negative integer. Seed used by stochastic Seurat steps.}
+
+\item{run_tsne}{Logical. Also calculate a seeded t-SNE embedding.}
+
+\item{tsne_perplexity}{Positive numeric. Requested t-SNE perplexity; capped
+based on the number of cells.}
 }
 \value{
 Processed Seurat object

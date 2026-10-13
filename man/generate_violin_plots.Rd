@@ -10,7 +10,8 @@ generate_violin_plots(
   out_dir,
   prefix,
   group_by_col = "seurat_clusters",
-  split_by = "condition"
+  split_by = "condition",
+  assay = "RNA"
 )
 }
 \arguments{

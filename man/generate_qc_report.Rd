@@ -11,7 +11,9 @@ generate_qc_report(
   author = "Pipeline",
   title = NULL,
   rmd_template = NULL,
-  cfg = NULL
+  cfg = NULL,
+  run_files = NULL,
+  log_path = NULL
 )
 }
 \arguments{

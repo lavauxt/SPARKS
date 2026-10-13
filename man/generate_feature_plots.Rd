@@ -4,7 +4,15 @@
 \alias{generate_feature_plots}
 \title{Save a FeaturePlot for each gene in the list}
 \usage{
-generate_feature_plots(seurat_obj, genes, out_dir, prefix, reduction = "umap")
+generate_feature_plots(
+  seurat_obj,
+  genes,
+  out_dir,
+  prefix,
+  reduction = "umap",
+  assay = "RNA",
+  split_by = "condition"
+)
 }
 \arguments{
 \item{seurat_obj}{Seurat object}
