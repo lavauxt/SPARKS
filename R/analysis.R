@@ -620,7 +620,7 @@ run_proportion_analysis <- function(seurat_obj, grouping_col,
               paste0("Proportions_", file_prefix, "_", grouping_col, ".txt")))
 
   if (isTRUE(run_test)) {
-    chi <- safe_run(stats::chisq.test(tbl),
+    chi <- safe_run(stats::chisq.test(tbl, simulate.p.value = TRUE, B = 10000L),
                     label = paste0("chisq.test_", grouping_col))
     if (!is.null(chi))
       writeLines(utils::capture.output(print(chi)),

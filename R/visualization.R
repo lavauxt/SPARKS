@@ -120,7 +120,7 @@ generate_violin_plots <- function(seurat_obj, genes, out_dir, prefix,
     object = seurat_obj,
     features = feature,
     group.by = group_by_col,
-    pt.size = 0,
+    pt.size = 0.2,
     assay = assay,
     combine = TRUE
   )
@@ -769,7 +769,7 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
         split.by = condition_col,
         assay    = "RNA",
         cols     = c("blue", "red"),
-        scale    = scale_dotplot         
+        scale    = isTRUE(scale_dotplot) && n_groups >= 5L
       )
     } else {
       Seurat::DotPlot(seurat_obj,
@@ -777,7 +777,7 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
                       group.by = group_by_col,
                       assay    = "RNA",
                       cols     = c("blue", "red"),
-                      scale    = scale_dotplot)   
+                      scale    = isTRUE(scale_dotplot) && n_groups >= 5L)
     }
 
     dp <- dp +
@@ -789,8 +789,12 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
         x = "Features", y = group_by_col
       ) +
       ggplot2::guides(
-        colour = ggplot2::guide_colorbar(title = "Avg Expression", 
-                                         barheight = grid::unit(4, "cm")),
+        colour = if (has_condition && scale_dotplot && n_groups >= 5L) {
+          ggplot2::guide_legend(title = "Condition")
+        } else {
+          ggplot2::guide_colorbar(title = "Avg Expression",
+                                  barheight = grid::unit(4, "cm"))
+        },
         size   = ggplot2::guide_legend(title = "Percent Expressed")
       ) +
       ggplot2::theme(
@@ -1070,7 +1074,8 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
                       features = genes,
                       group.by = condition_col,    
                       cols     = c("blue", "red"),
-                      scale    = scale_dotplot) +  
+                      scale    = isTRUE(scale_dotplot) &&
+                        length(conds_present) >= 5L) +
         Seurat::RotatedAxis() +
         ggplot2::labs(
           title = paste0(prefix, " | ", signature_name, " in ", grp,
@@ -1078,7 +1083,7 @@ generate_gene_signature_per_group_dotplots <- function(seurat_obj,
           x = "Genes",
           y = condition_col
         ) +
-        ggplot2::guides(colour = ggplot2::guide_colorbar(title = "Avg Expression")) +
+        ggplot2::guides(colour = ggplot2::guide_legend(title = "Condition")) +
         ggplot2::theme(
           plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
           axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
