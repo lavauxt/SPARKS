@@ -614,15 +614,48 @@ label_cells_by_markers <- function(seurat_obj, new_col_name, rules,
 #' @export
 .safe_load_celldex_reference <- function(ref_name, loader = function(name) {
   do.call(getExportedValue("celldex", name), args = list())
-}) {
-  tryCatch(
-    loader(ref_name),
-    error = function(e) {
-      message("   [SKIP SingleR reference] '", ref_name,
-              "' could not be loaded: ", conditionMessage(e))
-      NULL
-    }
+}, refresh_loader = function(name) {
+  if (!identical(name, "MouseRNAseqData")) {
+    stop("No forced-refresh method is defined for '", name, "'.")
+  }
+  celldex::fetchReference(
+    "mouse_rnaseq", "2024-02-26", overwrite = TRUE, realize.assays = TRUE
   )
+}, legacy_loader = function(name) {
+  if (!identical(name, "MouseRNAseqData")) {
+    stop("No legacy method is defined for '", name, "'.")
+  }
+  celldex::MouseRNAseqData(legacy = TRUE, cell.ont = "none")
+}) {
+  loaded <- tryCatch(loader(ref_name), error = identity)
+  if (!inherits(loaded, "error")) return(loaded)
+
+  message("   [WARN SingleR reference] '", ref_name,
+          "' could not be loaded: ", conditionMessage(loaded))
+  if (!identical(ref_name, "MouseRNAseqData")) {
+    message("   [SKIP SingleR reference] No automatic recovery is available for '",
+            ref_name, "'.")
+    return(NULL)
+  }
+
+  message("   [INFO SingleR reference] Refreshing the cached MouseRNAseqData reference.")
+  refreshed <- tryCatch(refresh_loader(ref_name), error = identity)
+  if (!inherits(refreshed, "error")) {
+    message("   [INFO SingleR reference] MouseRNAseqData loaded after cache refresh.")
+    return(refreshed)
+  }
+  message("   [WARN SingleR reference] Cache refresh failed: ",
+          conditionMessage(refreshed))
+
+  message("   [INFO SingleR reference] Trying the legacy ExperimentHub reference.")
+  legacy <- tryCatch(legacy_loader(ref_name), error = identity)
+  if (!inherits(legacy, "error")) {
+    message("   [INFO SingleR reference] Loaded MouseRNAseqData from the legacy source.")
+    return(legacy)
+  }
+  message("   [SKIP SingleR reference] Legacy fallback failed: ",
+          conditionMessage(legacy))
+  NULL
 }
 
 .load_singler_references <- function(ref_primary_name, ref_secondary_name,
