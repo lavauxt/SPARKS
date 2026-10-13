@@ -192,21 +192,35 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
                                        gsea_min_size = 10L,
                                        gsea_max_size = 500L) {
   if (!isTRUE(run_pseudobulk_deg) && !isTRUE(run_gsea)) return(invisible(NULL))
+  write_gsea_status <- function(message_text, group = NULL) {
+    if (!isTRUE(run_gsea)) return(invisible(NULL))
+    make_dir(gsea_dir)
+    stem <- paste0("GSEA_Status_", file_prefix,
+                   if (!is.null(group)) paste0("_", .safe_filename(group)),
+                   "_by_", group_col, ".txt")
+    writeLines(message_text, file.path(gsea_dir, stem))
+    invisible(NULL)
+  }
   if (!requireNamespace("edgeR", quietly = TRUE)) {
     task <- c(if (run_pseudobulk_deg) "pseudobulk DEG", if (run_gsea) "ranked GSEA")
-    message("   [SKIP] ", paste(task, collapse = " and "),
-            " requires Bioconductor package 'edgeR'.")
+    reason <- paste(paste(task, collapse = " and "),
+                    "requires Bioconductor package 'edgeR'.")
+    message("   [SKIP] ", reason)
+    write_gsea_status(reason)
     return(invisible(NULL))
   }
   if (run_gsea && !requireNamespace("fgsea", quietly = TRUE)) {
-    message("   [SKIP GSEA] Ranked GSEA requires package 'fgsea'.")
+    reason <- "Ranked GSEA requires package 'fgsea'."
+    message("   [SKIP GSEA] ", reason)
+    write_gsea_status(reason)
     run_gsea <- FALSE
   }
   md <- seurat_obj@meta.data
   missing <- setdiff(c(group_col, condition_col, sample_col), colnames(md))
   if (length(missing)) {
-    message("   [SKIP Sample-level analysis] Missing metadata: ",
-            paste(missing, collapse = ", "))
+    reason <- paste0("Missing metadata: ", paste(missing, collapse = ", "))
+    message("   [SKIP Sample-level analysis] ", reason)
+    write_gsea_status(reason)
     return(invisible(NULL))
   }
 
@@ -220,6 +234,10 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
               "' gene sets: ", conditionMessage(e))
       NULL
     })
+    if (is.null(pathways)) {
+      write_gsea_status(paste0("MSigDB collection '", collection,
+                               "' gene sets are unavailable."))
+    }
   }
 
   for (group in groups) {
@@ -240,6 +258,8 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
     )
     if (!identical(fit$status, "ok")) {
       message("   [SKIP Sample-level analysis] ", group, ": ", fit$status, ".")
+      write_gsea_status(paste0("Ranked GSEA was not run for group '", group,
+                               "': ", fit$status, "."), group)
       next
     }
     fit$result$cluster <- group
@@ -263,12 +283,21 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
       if (length(stats) < 2L || max_size < gsea_min_size) {
         message("   [SKIP GSEA] ", group,
                 ": too few ranked genes for the requested pathway size range.")
+        write_gsea_status(
+          paste0("Ranked GSEA was not run for group '", group,
+                 "': too few ranked genes for the requested pathway size range."),
+          group
+        )
       } else {
         result <- tryCatch(
           fgsea::fgseaMultilevel(pathways, stats, minSize = gsea_min_size,
                                  maxSize = max_size),
           error = function(e) {
             message("   [SKIP GSEA] ", group, ": ", conditionMessage(e))
+            write_gsea_status(
+              paste0("Ranked GSEA failed for group '", group, "': ",
+                     conditionMessage(e)), group
+            )
             NULL
           }
         )
@@ -289,6 +318,10 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
           gsea_files <- c(gsea_files, gsea_file)
         } else if (!is.null(result)) {
           message("   [SKIP GSEA] ", group, ": no gene sets passed size filters.")
+          write_gsea_status(
+            paste0("Ranked GSEA returned no pathways passing size filters for group '",
+                   group, "'."), group
+          )
         }
       }
     }

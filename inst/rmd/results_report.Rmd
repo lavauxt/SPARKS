@@ -513,6 +513,18 @@ if (length(gsea_files) == 0L) {
     }
   }
 }
+gsea_status_files <- .current_files(list.files(
+  out_dir, pattern = "^GSEA_Status_.*\\.txt$",
+  recursive = TRUE, full.names = TRUE
+))
+if (length(gsea_status_files)) {
+  cat("\nGSEA diagnostics:\n\n")
+  for (f in gsea_status_files) {
+    cat("- `", basename(f), "`: ",
+        paste(readLines(f, warn = FALSE), collapse = " "), "\n", sep = "")
+  }
+  cat("\n")
+}
 ```
 
 ```{r gsea-projections, results='asis'}

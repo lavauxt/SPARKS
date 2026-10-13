@@ -7,42 +7,62 @@
 #' @return NULL
 #' @export
 generate_feature_plots <- function(seurat_obj, genes, out_dir, prefix,
-                                   reduction = "umap") {
+                                   reduction = "umap", assay = "RNA",
+                                   split_by = "condition") {
 
-  genes <- .filter_present_genes(genes, seurat_obj, "FeaturePlot")
+  genes <- .filter_present_genes(genes, seurat_obj, "FeaturePlot", assay = assay)
   if (is.null(genes)) return(invisible(NULL))
 
   if (is.null(seurat_obj@reductions[[reduction]])) {
     message("   [SKIP FeaturePlot] reduction '", reduction, "' not found")
     return(invisible(NULL))
   }
+  if (!assay %in% names(seurat_obj@assays)) {
+    message("   [SKIP FeaturePlot] Assay '", assay, "' is not available.")
+    return(invisible(NULL))
+  }
 
+  split_by <- if (!is.null(split_by) && split_by %in% colnames(seurat_obj@meta.data) &&
+                  length(unique(stats::na.omit(seurat_obj@meta.data[[split_by]]))) > 1L) {
+    split_by
+  } else {
+    NULL
+  }
+  if (!"data" %in% SeuratObject::Layers(seurat_obj[[assay]])) {
+    message("   [SKIP FeaturePlot] Assay '", assay,
+            "' does not have a normalized 'data' layer.")
+    return(invisible(NULL))
+  }
   make_dir(out_dir)
 
-for (gene in genes) {
-  p <- Seurat::FeaturePlot(
-    seurat_obj,
-    features = gene,
-    reduction = reduction,
-    split.by = "condition",
-    pt.size = 1,
-    keep.scale = "all"
-  ) +
-    patchwork::plot_annotation(
-      title = paste("Expression of", gene, "in", prefix)
+  for (gene in genes) {
+    p <- safe_run({
+      Seurat::FeaturePlot(
+        seurat_obj,
+        features = gene,
+        reduction = reduction,
+        split.by = split_by,
+        assay = assay,
+        pt.size = 1,
+        keep.scale = "all",
+        combine = TRUE
+      ) + patchwork::plot_annotation(
+        title = paste("Expression of", gene, "in", prefix)
+      )
+    }, label = paste0("FeaturePlot ", gene))
+    if (is.null(p)) next
+
+    n_conditions <- if (is.null(split_by)) 1L else length(unique(stats::na.omit(
+      as.character(seurat_obj@meta.data[[split_by]])
+    )))
+    dynamic_width <- max(6, n_conditions * 5 + 1)
+
+    save_png(p,
+      filename = file.path(out_dir, paste0(prefix, "_FeaturePlot_", gene, ".png")),
+      width = dynamic_width,
+      height = 5
     )
-
-  dynamic_width <- max(
-    6,
-    length(unique(seurat_obj$condition[!is.na(seurat_obj$condition)])) * 5 + 1
-  )
-
-  save_png(p,
-    filename = file.path(out_dir, paste0(prefix, "_FeaturePlot_", gene, ".png")),
-    width    = dynamic_width,
-    height   = 5
-  )
-}
+  }
 
   invisible(NULL)
 }
@@ -59,13 +79,18 @@ for (gene in genes) {
 #' @export
 generate_violin_plots <- function(seurat_obj, genes, out_dir, prefix,
                                    group_by_col = "seurat_clusters",
-                                   split_by     = "condition") {
+                                   split_by     = "condition",
+                                   assay        = "RNA") {
 
-  genes <- .filter_present_genes(genes, seurat_obj, "VlnPlot")
+  genes <- .filter_present_genes(genes, seurat_obj, "VlnPlot", assay = assay)
   if (is.null(genes)) return(invisible(NULL))
 
   if (!group_by_col %in% colnames(seurat_obj@meta.data)) {
     message("   [SKIP VlnPlot] '", group_by_col, "' not in metadata")
+    return(invisible(NULL))
+  }
+  if (!assay %in% names(seurat_obj@assays)) {
+    message("   [SKIP VlnPlot] Assay '", assay, "' is not available.")
     return(invisible(NULL))
   }
   use_split <- !is.null(split_by) &&
@@ -74,19 +99,10 @@ generate_violin_plots <- function(seurat_obj, genes, out_dir, prefix,
 
   make_dir(out_dir)
   for (g in genes) {
-    p <- safe_run({
-      args <- list(
-        seurat_obj,
-        features = g,
-        group.by = group_by_col,
-        pt.size = 0
-      )
-      if (use_split) {
-        args$split.by  <- split_by
-        args$split.plot <- TRUE
-      }
-      do.call(Seurat::VlnPlot, args)
-    }, label = paste0("VlnPlot   ", g))
+    p <- .make_condition_violin(
+      seurat_obj, feature = g, group_by_col = group_by_col,
+      split_by = if (use_split) split_by else NULL, assay = assay
+    )
     if (!is.null(p)) {
       save_png(
         p,
@@ -96,6 +112,24 @@ generate_violin_plots <- function(seurat_obj, genes, out_dir, prefix,
     }
   }
   invisible(NULL)
+}
+
+.make_condition_violin <- function(seurat_obj, feature, group_by_col,
+                                   split_by = NULL, assay = "RNA") {
+  args <- list(
+    object = seurat_obj,
+    features = feature,
+    group.by = group_by_col,
+    pt.size = 0,
+    assay = assay,
+    combine = TRUE
+  )
+  if (!is.null(split_by)) {
+    args$split.by <- split_by
+    # Full violins appear side by side for each condition in one panel.
+    args$split.plot <- FALSE
+  }
+  safe_run(do.call(Seurat::VlnPlot, args), label = paste0("VlnPlot ", feature))
 }
 
 #' UMAP coloured by number of DEGs per cluster

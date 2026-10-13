@@ -109,7 +109,7 @@ safe_run <- function(expr, label = "Task", fallback = NULL) {
                       all.files = TRUE, no.. = TRUE)
   files <- files[file.info(files)$isdir %in% FALSE]
   report_tables <- grepl(
-    "^(AllMarkers|DEG_Counts_|AvgExpr_|Proportions_|PseudobulkDEG_|PseudobulkCounts_|GSEA_|Correlations_|GSEA_Projection_)",
+    "^(AllMarkers|DEG_Counts_|AvgExpr_|Proportions_|PseudobulkDEG_|PseudobulkCounts_|GSEA_|Correlations_|.*_FeaturePlot_|VlnPlot_)",
     basename(files)
   )
   files <- files[report_tables]
@@ -209,9 +209,22 @@ get_avg_expr <- function(seurat_obj, layer = "data", assay = "SCT") {
 #' @param seurat_obj Seurat object
 #' @param context Character for logging
 #' @return Character vector of available genes, or NULL
-.filter_present_genes <- function(genes, seurat_obj, context = "") {
+.filter_present_genes <- function(genes, seurat_obj, context = "", assay = NULL) {
   if (is.null(genes) || length(genes) == 0L) return(NULL)
-  valid <- intersect(as.character(genes), rownames(seurat_obj))
+  available <- if (!is.null(assay)) {
+    if (!assay %in% names(seurat_obj@assays)) character(0)
+    else rownames(seurat_obj[[assay]])
+  } else {
+    rownames(seurat_obj)
+  }
+  genes <- unique(as.character(genes))
+  valid <- intersect(genes, available)
+  missing <- setdiff(genes, valid)
+  if (length(missing) > 0L) {
+    message("   [SKIP ", context, "] Requested genes absent",
+            if (!is.null(assay)) paste0(" from assay '", assay, "'") else "",
+            ": ", paste(missing, collapse = ", "))
+  }
   if (length(valid) == 0L) {
     message("   [SKIP] ", context, ": none of the requested genes found in data.")
     return(NULL)

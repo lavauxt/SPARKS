@@ -460,7 +460,9 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
   fp_dir <- file.path(base_dir, suffix, display_name, "FeaturePlot")
   make_dir(fp_dir)
   generate_feature_plots(seurat_obj, genes_list, fp_dir, display_name,
-                         reduction = cfg$processing$reduction)
+                         reduction = cfg$processing$reduction,
+                         assay = "RNA",
+                         split_by = cfg$processing$condition_col)
 }
 
 #' Run all analyses for one grouping column
@@ -521,7 +523,9 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     width = umap_w, height = umap_h)
 
   generate_violin_plots(seurat_obj, genes_list, dirs$VlnPlot, file_prefix,
-                         group_by_col = group_col)
+                         group_by_col = group_col,
+                         split_by = cfg$processing$condition_col,
+                         assay = "RNA")
 
   if (isTRUE(cfg$proportions$run)) {
     run_proportion_analysis(seurat_obj, group_col, dirs$Proportions, file_prefix,

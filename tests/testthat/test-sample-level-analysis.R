@@ -94,6 +94,34 @@ test_that("sample-level analysis writes Hallmark GSEA and pseudobulk DEG separat
   expect_identical(utils::head(gsea_table$group, 1L), "GroupA")
 })
 
+test_that("GSEA writes a status explanation when replicate design is insufficient", {
+  skip_if_not_installed("edgeR")
+
+  counts <- matrix(
+    c(10, 12, 14, 16, 20, 21, 19, 22, 11, 13, 15, 17, 18, 20, 23, 24), nrow = 2,
+    dimnames = list(c("g1", "g2"), paste0("cell", seq_len(8)))
+  )
+  object <- suppressWarnings(Seurat::CreateSeuratObject(counts = counts))
+  object$group <- "A"
+  object$sample <- rep(c("s1", "s2"), each = 4)
+  object$condition <- rep(c("WT", "KO"), each = 4)
+  out <- tempfile("gsea-status-")
+  on.exit(unlink(out, recursive = TRUE), add = TRUE)
+
+  SPARKS:::.run_sample_level_analysis(
+    object, "group", file.path(out, "DEG"), file.path(out, "GSEA"),
+    "Main", "Mouse", run_gsea = TRUE, pathways = list(test = c("g1", "g2")),
+    gsea_min_size = 1L, gsea_max_size = 1L
+  )
+
+  status_file <- list.files(file.path(out, "GSEA"), pattern = "^GSEA_Status_",
+                            full.names = TRUE)
+  expect_length(status_file, 1L)
+  expect_match(readLines(status_file), "at least 2 samples per condition")
+  snapshot <- SPARKS:::.snapshot_result_files(file.path(out, "GSEA"))
+  expect_true(any(grepl("GSEA_Status_", rownames(snapshot), fixed = TRUE)))
+})
+
 test_that("GSEA projection maps pathway NES to cells by group", {
   object <- suppressWarnings(Seurat::CreateSeuratObject(
     counts = matrix(
@@ -156,6 +184,44 @@ test_that("GSEA projection skips when embedding is missing", {
     "Reduction 'umap' is not available"
   )
   expect_length(paths, 0L)
+})
+
+test_that("FeaturePlots and violins use RNA genes and split by condition", {
+  counts <- matrix(
+    c(1:12, 12:1), nrow = 2,
+    dimnames = list(c("rna-only", "shared"), paste0("cell", seq_len(12)))
+  )
+  object <- suppressWarnings(Seurat::CreateSeuratObject(counts = counts))
+  object <- Seurat::NormalizeData(object, assay = "RNA", verbose = FALSE)
+  object[["SCT"]] <- SeuratObject::CreateAssay5Object(
+    counts = Matrix::Matrix(counts["shared", , drop = FALSE], sparse = TRUE),
+    data = Matrix::Matrix(counts["shared", , drop = FALSE], sparse = TRUE)
+  )
+  object$condition <- rep(c("WT", "KO"), each = 6)
+  object$group <- rep(c("A", "B"), each = 6)
+  emb <- matrix(seq_len(24), ncol = 2,
+                dimnames = list(colnames(object), c("UMAP_1", "UMAP_2")))
+  object[["umap"]] <- SeuratObject::CreateDimReducObject(
+    embeddings = emb, key = "UMAP_", assay = "RNA"
+  )
+  Seurat::DefaultAssay(object) <- "SCT"
+
+  feature_dir <- tempfile("feature-split-")
+  violin_dir <- tempfile("violin-split-")
+  on.exit(unlink(c(feature_dir, violin_dir), recursive = TRUE), add = TRUE)
+
+  SPARKS::generate_feature_plots(
+    object, genes = c("rna-only", "sct-absent"), out_dir = feature_dir,
+    prefix = "Main", reduction = "umap", assay = "RNA", split_by = "condition"
+  )
+  SPARKS::generate_violin_plots(
+    object, genes = "rna-only", out_dir = violin_dir, prefix = "Main",
+    group_by_col = "group", split_by = "condition", assay = "RNA"
+  )
+
+  expect_true(file.exists(file.path(feature_dir, "Main_FeaturePlot_rna-only.png")))
+  expect_false(file.exists(file.path(feature_dir, "Main_FeaturePlot_sct-absent.png")))
+  expect_true(file.exists(file.path(violin_dir, "VlnPlot_Main_rna-only.png")))
 })
 
 test_that("analysis output folders distinguish analysis types", {
