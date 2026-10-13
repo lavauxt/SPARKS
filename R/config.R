@@ -95,6 +95,20 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$processing$reduction          <- cfg$processing$reduction          %||% "umap"
   cfg$processing$cluster_resolution <- cfg$processing$cluster_resolution %||% 0.5
   cfg$processing$npcs               <- cfg$processing$npcs               %||% 50L
+  cfg$processing$run_tsne            <- cfg$processing$run_tsne            %||% FALSE
+  if (!is.logical(cfg$processing$run_tsne) ||
+      length(cfg$processing$run_tsne) != 1L ||
+      is.na(cfg$processing$run_tsne)) {
+    stop("processing$run_tsne must be TRUE or FALSE.", call. = FALSE)
+  }
+  cfg$processing$tsne_perplexity      <- cfg$processing$tsne_perplexity      %||% 30
+  if (!is.numeric(cfg$processing$tsne_perplexity) ||
+      length(cfg$processing$tsne_perplexity) != 1L ||
+      !is.finite(cfg$processing$tsne_perplexity) ||
+      cfg$processing$tsne_perplexity <= 0) {
+    stop("processing$tsne_perplexity must be a positive finite number.",
+         call. = FALSE)
+  }
   cfg$processing$seed               <- cfg$processing$seed               %||% 2861L
   cfg$processing$seed <- tryCatch(
     .validate_seed(cfg$processing$seed),
@@ -173,6 +187,20 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   if (cfg$gsea$min_size < 1L || cfg$gsea$max_size < cfg$gsea$min_size) {
     stop("gsea$min_size must be >= 1 and gsea$max_size must be >= min_size.",
          call. = FALSE)
+  }
+  cfg$gsea$plot_projection <- cfg$gsea$plot_projection %||% TRUE
+  if (!is.logical(cfg$gsea$plot_projection) ||
+      length(cfg$gsea$plot_projection) != 1L ||
+      is.na(cfg$gsea$plot_projection)) {
+    stop("gsea$plot_projection must be TRUE or FALSE.", call. = FALSE)
+  }
+  cfg$gsea$projection_top_n <- cfg$gsea$projection_top_n %||% 10L
+  if (!is.numeric(cfg$gsea$projection_top_n) ||
+      length(cfg$gsea$projection_top_n) != 1L ||
+      !is.finite(cfg$gsea$projection_top_n) ||
+      cfg$gsea$projection_top_n < 1L ||
+      cfg$gsea$projection_top_n != as.integer(cfg$gsea$projection_top_n)) {
+    stop("gsea$projection_top_n must be a positive integer.", call. = FALSE)
   }
 
   cfg$plot$top_genes_heatmap_n  <- cfg$plot$top_genes_heatmap_n  %||% 10L

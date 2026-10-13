@@ -66,7 +66,7 @@ qc:
 # ── Seurat processing ──────────────────────────────────────────────────────────
 processing:
   vars_to_regress: ["percent.mt"]
-  seed:               2861   # reproducible SCTransform, PCA, Harmony, UMAP and clustering
+  seed:               2861   # reproducible SCTransform, PCA, Harmony, UMAP, t-SNE and clustering
   pca_dims_from:      1
   pca_dims_to:        21
   cluster_resolution: 0.5
@@ -74,6 +74,8 @@ processing:
   cluster_col:        "seurat_clusters"
   condition_col:      "condition"   # must stay "condition" (the pipeline stores it there)
   reduction:          "umap"
+  run_tsne:           false   # optionally calculate t-SNE alongside UMAP
+  tsne_perplexity:    30      # automatically capped for the available cells
   # true (default): after SCTransform, run Seurat's PrepSCTFindMarkers() so the SCT
   # counts/data of all samples share one sequencing depth (needed for between-sample
   # DEG / average expression). Set false to skip it (faster, less memory).
@@ -102,6 +104,8 @@ gsea:
   collection: "H"            # MSigDB Hallmark
   min_size: 10
   max_size: 500
+  plot_projection: true      # project group-level NES onto cells in embeddings
+  projection_top_n: 10       # pathways with lowest adjusted p-values
 
 # ── SingleR ────────────────────────────────────────────────────────────────────
 singler:

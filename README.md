@@ -260,6 +260,16 @@ by `escape$run`; its default library is Hallmark (`H`). Harmony remains the
 batch-integration method for clustering and is not a differential-expression or
 enrichment test.
 
+By default, the pipeline also writes embedding projections for the top 10
+Hallmark pathways, with each group's normalized enrichment score (NES) mapped
+to its cells on the UMAP. This is a visualization of **group-level** pseudobulk
+results, not per-cell pathway activity. Set `gsea$plot_projection: false` to
+disable these figures, or change `gsea$projection_top_n`. Optional t-SNE
+coordinates can be computed alongside UMAP with `processing$run_tsne: true`;
+when available, the same GSEA projection plots are also written on t-SNE. The
+t-SNE perplexity is automatically capped for small datasets and can be tuned
+with `processing$tsne_perplexity`.
+
 Analysis outputs use separate sibling folders under each grouping: `DEG/`,
 `Pseudobulk/`, `Expression/`, `Proportions/`, `Correlation/`, and `GSEA/`.
 Each run also records console messages in `pipeline.log` and writes genuine R

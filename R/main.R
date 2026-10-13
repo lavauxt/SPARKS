@@ -211,7 +211,9 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       seed            = cfg$processing$seed,
       vars_to_regress = regress_vars,
       split_by        = "orig.ident",
-      prep_sct_findmarkers = isTRUE(cfg$processing$prep_sct_findmarkers)
+      prep_sct_findmarkers = isTRUE(cfg$processing$prep_sct_findmarkers),
+      run_tsne = isTRUE(cfg$processing$run_tsne),
+      tsne_perplexity = cfg$processing$tsne_perplexity
     )
 
     save_png(
@@ -449,6 +451,8 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
       deg_color    = deg_color,
       cfg          = cfg,
       gsea_pathways = gsea_pathways,
+      gsea_plot_projection = isTRUE(cfg$gsea$plot_projection),
+      gsea_projection_top_n = cfg$gsea$projection_top_n,
       skip_cell_deg = skip_cell_deg
     )
   }
@@ -473,6 +477,8 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
 run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
                                    genes_list, base_dir, suffix,
                                    deg_color, cfg, gsea_pathways = NULL,
+                                   gsea_plot_projection = TRUE,
+                                   gsea_projection_top_n = 10L,
                                    skip_cell_deg = FALSE) {
   message("   -> Grouping: ", group_col)
 
@@ -556,7 +562,7 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   }
 
   if (isTRUE(cfg$pseudobulk$run) || isTRUE(cfg$gsea$run)) {
-    .run_sample_level_analysis(
+    gsea_files <- .run_sample_level_analysis(
       seurat_obj = seurat_obj,
       group_col = group_col,
       pseudobulk_dir = file.path(dirs$Pseudobulk, "DEG"),
@@ -573,6 +579,36 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
       gsea_min_size = cfg$gsea$min_size,
       gsea_max_size = cfg$gsea$max_size
     )
+    if (isTRUE(cfg$gsea$run) && isTRUE(gsea_plot_projection) &&
+        length(gsea_files)) {
+      .generate_gsea_projection(
+        seurat_obj = seurat_obj,
+        gsea_dir = dirs$GSEA,
+        group_by_col = group_col,
+        reduction = "umap",
+        collection = cfg$gsea$collection,
+        file_prefix = file_prefix,
+        top_n = gsea_projection_top_n,
+        gsea_files = gsea_files,
+        width = cfg$plot$umap_width_standard,
+        height = cfg$plot$umap_height_standard
+      )
+      if (isTRUE(cfg$processing$run_tsne) &&
+          "tsne" %in% SeuratObject::Reductions(seurat_obj)) {
+        .generate_gsea_projection(
+          seurat_obj = seurat_obj,
+          gsea_dir = dirs$GSEA,
+          group_by_col = group_col,
+          reduction = "tsne",
+          collection = cfg$gsea$collection,
+          file_prefix = file_prefix,
+          top_n = gsea_projection_top_n,
+          gsea_files = gsea_files,
+          width = cfg$plot$umap_width_standard,
+          height = cfg$plot$umap_height_standard
+        )
+      }
+    }
   }
 
   for (layer in cfg$expression$layers) {
@@ -730,7 +766,9 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     npcs       = cfg$processing$npcs,
     seed       = cfg$processing$seed,
     split_by   = "orig.ident",
-    prep_sct_findmarkers = isTRUE(cfg$processing$prep_sct_findmarkers))
+    prep_sct_findmarkers = isTRUE(cfg$processing$prep_sct_findmarkers),
+    run_tsne = isTRUE(cfg$processing$run_tsne),
+    tsne_perplexity = cfg$processing$tsne_perplexity)
 
   singler_names <- cfg$singler$label_names[
     cfg$singler$label_names %in% colnames(sub_obj@meta.data)]

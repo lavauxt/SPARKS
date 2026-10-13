@@ -515,6 +515,28 @@ if (length(gsea_files) == 0L) {
 }
 ```
 
+```{r gsea-projections, results='asis'}
+gsea_projection_files <- .current_files(list.files(
+  out_dir, pattern = "^GSEA_Projection_.*\\.png$",
+  recursive = TRUE, full.names = TRUE
+))
+if (length(gsea_projection_files)) {
+  cat("### GSEA embedding projections\n\n")
+  cat("> NES is a group-level pseudobulk GSEA result repeated across cells in the matching metadata group; it is not a per-cell enrichment score.\n\n")
+  for (f in gsea_projection_files) {
+    cat("#### ", basename(f), "\n\n", sep = "")
+    print(knitr::include_graphics(f))
+  }
+} else if (!is.null(cfg$gsea$plot_projection) &&
+           !isTRUE(cfg$gsea$plot_projection)) {
+  cat("> GSEA embedding projections are disabled in configuration.\n\n")
+} else if (isTRUE(cfg$gsea$run %||% TRUE)) {
+  cat("> No current-run GSEA embedding projections are available. Check GSEA results, reduction availability, and pipeline.log.\n\n")
+} else {
+  cat("> Ranked GSEA is disabled, so no embedding projections were generated.\n\n")
+}
+```
+
 ### Gene correlations
 
 ```{r correlation-results, results='asis'}

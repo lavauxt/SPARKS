@@ -12,7 +12,7 @@ generate_feature_plots <- function(seurat_obj, genes, out_dir, prefix,
   genes <- .filter_present_genes(genes, seurat_obj, "FeaturePlot")
   if (is.null(genes)) return(invisible(NULL))
 
-  if (!.has_reduction(seurat_obj, reduction)) {
+  if (is.null(seurat_obj@reductions[[reduction]])) {
     message("   [SKIP FeaturePlot] reduction '", reduction, "' not found")
     return(invisible(NULL))
   }
@@ -177,6 +177,112 @@ generate_deg_umap <- function(seurat_obj, deg_counts, umap_dir, file_prefix,
     paste0("UMAP_DEG_", file_prefix, "_", group_by_col, ".png")),
     width = width, height = height)
   invisible(NULL)
+}
+
+.generate_gsea_projection <- function(seurat_obj, gsea_dir, group_by_col,
+                                     reduction = "umap", collection = "H",
+                                     file_prefix = "GSEA", top_n = 10L,
+                                     width = 8, height = 7,
+                                     gsea_files = NULL) {
+  if (length(top_n) != 1L || is.na(top_n) || top_n < 1L ||
+      top_n != as.integer(top_n)) {
+    message("   [SKIP GSEA projection] top_n must be a positive integer.")
+    return(invisible(character(0)))
+  }
+  if (!dir.exists(gsea_dir)) {
+    message("   [SKIP GSEA projection] GSEA directory is not available.")
+    return(invisible(character(0)))
+  }
+  if (!group_by_col %in% colnames(seurat_obj@meta.data)) {
+    message("   [SKIP GSEA projection] Grouping metadata '", group_by_col,
+            "' is missing.")
+    return(invisible(character(0)))
+  }
+  if (!.has_reduction(seurat_obj, reduction)) {
+    message("   [SKIP GSEA projection] Reduction '", reduction,
+            "' is not available.")
+    return(invisible(character(0)))
+  }
+
+  if (is.null(gsea_files)) {
+    gsea_files <- list.files(gsea_dir, pattern = "^GSEA_.*\\.tsv$",
+                             full.names = TRUE)
+  }
+  if (!length(gsea_files)) {
+    message("   [SKIP GSEA projection] No GSEA result tables are available.")
+    return(invisible(character(0)))
+  }
+  gsea <- lapply(gsea_files, function(path) {
+    tryCatch(utils::read.delim(path, check.names = FALSE,
+                               stringsAsFactors = FALSE),
+             error = function(e) NULL)
+  })
+  gsea <- Filter(function(x) is.data.frame(x) &&
+                   all(c("pathway", "group", "NES", "padj") %in% names(x)),
+                 gsea)
+  if (!length(gsea)) {
+    message("   [SKIP GSEA projection] GSEA tables lack pathway, group, NES, or padj columns.")
+    return(invisible(character(0)))
+  }
+  gsea <- do.call(rbind, gsea)
+  gsea$NES <- suppressWarnings(as.numeric(gsea$NES))
+  gsea$padj <- suppressWarnings(as.numeric(gsea$padj))
+  gsea <- gsea[!is.na(gsea$pathway) & !is.na(gsea$group) &
+                 is.finite(gsea$NES) & is.finite(gsea$padj), , drop = FALSE]
+  if (!nrow(gsea)) {
+    message("   [SKIP GSEA projection] No finite NES values are available.")
+    return(invisible(character(0)))
+  }
+
+  # Keep the best adjusted-p result if a pathway/group occurs in more than one file.
+  gsea <- gsea[order(gsea$padj, na.last = TRUE), , drop = FALSE]
+  gsea <- gsea[!duplicated(paste(gsea$pathway, gsea$group, sep = "\r")), , drop = FALSE]
+  pathway_order <- names(sort(tapply(gsea$padj, gsea$pathway, min)))
+  pathway_order <- head(pathway_order, as.integer(top_n))
+  if (!length(pathway_order)) {
+    message("   [SKIP GSEA projection] No pathways with adjusted p-values are available.")
+    return(invisible(character(0)))
+  }
+
+  emb <- as.data.frame(Seurat::Embeddings(seurat_obj, reduction = reduction))
+  if (ncol(emb) < 2L) {
+    message("   [SKIP GSEA projection] Reduction '", reduction,
+            "' has fewer than two dimensions.")
+    return(invisible(character(0)))
+  }
+  emb <- emb[, 1:2, drop = FALSE]
+  colnames(emb) <- c("x", "y")
+  emb$cell <- rownames(emb)
+  emb$group <- as.character(seurat_obj@meta.data[emb$cell, group_by_col])
+
+  make_dir(gsea_dir)
+  paths <- character(0)
+  for (pathway in pathway_order) {
+    scores <- gsea[gsea$pathway == pathway, c("group", "NES"), drop = FALSE]
+    scores <- scores[!duplicated(scores$group), , drop = FALSE]
+    plot_data <- merge(emb, scores, by = "group", all.x = TRUE, sort = FALSE)
+    p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = x, y = y, colour = NES)) +
+      ggplot2::geom_point(size = 0.6, alpha = 0.8) +
+      ggplot2::scale_colour_gradient2(midpoint = 0, na.value = "grey85") +
+      ggplot2::coord_equal() +
+      ggplot2::theme_minimal() +
+      ggplot2::labs(
+        title = paste0(collection, " GSEA: ", pathway),
+        subtitle = paste0("Group-level NES mapped onto cells by ", group_by_col,
+                          " (", reduction, ")"),
+        x = paste0(reduction, "_1"), y = paste0(reduction, "_2"),
+        colour = "NES"
+      )
+    path <- file.path(
+      gsea_dir,
+      paste0("GSEA_Projection_", .safe_filename(pathway), "_",
+             .safe_filename(file_prefix), "_", .safe_filename(group_by_col),
+             "_", .safe_filename(reduction), ".png")
+    )
+    save_png(p, path, width = width, height = height)
+    paths <- c(paths, path)
+  }
+  invisible(paths)
 }
 
 #' FindAllMarkers heatmap for one grouping

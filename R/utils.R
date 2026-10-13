@@ -109,7 +109,7 @@ safe_run <- function(expr, label = "Task", fallback = NULL) {
                       all.files = TRUE, no.. = TRUE)
   files <- files[file.info(files)$isdir %in% FALSE]
   report_tables <- grepl(
-    "^(AllMarkers|DEG_Counts_|AvgExpr_|Proportions_|PseudobulkDEG_|PseudobulkCounts_|GSEA_|Correlations_)",
+    "^(AllMarkers|DEG_Counts_|AvgExpr_|Proportions_|PseudobulkDEG_|PseudobulkCounts_|GSEA_|Correlations_|GSEA_Projection_)",
     basename(files)
   )
   files <- files[report_tables]

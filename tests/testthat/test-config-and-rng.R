@@ -173,6 +173,7 @@ test_that("results report covers current-run analyses and diagnostics", {
   expect_true(any(grepl("Pipeline diagnostics", report, fixed = TRUE)))
   expect_true(any(grepl("Per-cell pathway scoring", report, fixed = TRUE)))
   expect_true(any(grepl("Escape_Heatmap_", report, fixed = TRUE)))
+  expect_true(any(grepl("GSEA_Projection_", report, fixed = TRUE)))
 })
 
 test_that("sample-level and Hallmark analysis config has deliberate defaults", {
@@ -190,6 +191,59 @@ test_that("sample-level and Hallmark analysis config has deliberate defaults", {
   expect_equal(loaded$pseudobulk$min_replicates, 2L)
   expect_true(loaded$gsea$run)
   expect_identical(loaded$gsea$collection, "H")
+  expect_true(loaded$gsea$plot_projection)
+  expect_equal(loaded$gsea$projection_top_n, 10L)
+  expect_false(loaded$processing$run_tsne)
+  expect_equal(loaded$processing$tsne_perplexity, 30)
+})
+
+test_that("t-SNE perplexity and GSEA projection count are validated", {
+  expect_equal(SPARKS:::.effective_tsne_perplexity(100, 30), 30)
+  expect_lt(SPARKS:::.effective_tsne_perplexity(10, 30), 3)
+  expect_null(SPARKS:::.effective_tsne_perplexity(3, 30))
+
+  cfg <- list(
+    pipeline = list(), qc = list(), processing = list(tsne_perplexity = 0),
+    deg = list(), plot = list(), species = list(), singler = list(),
+    groupings_main = NULL
+  )
+  file <- tempfile(fileext = ".yml")
+  on.exit(unlink(file), add = TRUE)
+  yaml::write_yaml(cfg, file)
+  expect_error(SPARKS::load_pipeline_config(file), "tsne_perplexity")
+
+  cfg$processing$tsne_perplexity <- 30
+  cfg$gsea <- list(projection_top_n = 1.5)
+  yaml::write_yaml(cfg, file)
+  expect_error(SPARKS::load_pipeline_config(file), "projection_top_n")
+})
+
+test_that("GSEA projection plots default on and can be turned off", {
+  cfg <- list(
+    pipeline = list(), qc = list(), processing = list(), deg = list(),
+    plot = list(), species = list(), singler = list(), groupings_main = NULL,
+    gsea = list(plot_projection = FALSE)
+  )
+  file <- tempfile(fileext = ".yml")
+  on.exit(unlink(file), add = TRUE)
+  yaml::write_yaml(cfg, file)
+
+  loaded <- SPARKS::load_pipeline_config(file)
+  expect_false(loaded$gsea$plot_projection)
+  expect_equal(loaded$gsea$projection_top_n, 10L)
+})
+
+test_that("t-SNE configuration must be logical", {
+  cfg <- list(
+    pipeline = list(), qc = list(), processing = list(run_tsne = "yes"),
+    deg = list(), plot = list(), species = list(), singler = list(),
+    groupings_main = NULL
+  )
+  file <- tempfile(fileext = ".yml")
+  on.exit(unlink(file), add = TRUE)
+  yaml::write_yaml(cfg, file)
+
+  expect_error(SPARKS::load_pipeline_config(file), "run_tsne")
 })
 
 test_that("an explicitly empty expression layer list disables exports", {

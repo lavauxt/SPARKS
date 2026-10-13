@@ -212,6 +212,7 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
 
   groups <- unique(as.character(md[[group_col]]))
   groups <- groups[!is.na(groups)]
+  gsea_files <- character(0)
   if (run_pseudobulk_deg) make_dir(pseudobulk_dir)
   if (run_gsea && is.null(pathways)) {
     pathways <- tryCatch(.hallmark_gene_sets(species, collection), error = function(e) {
@@ -279,19 +280,20 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
           result$condition_1 <- fit$result$condition_1[1L]
           result$condition_2 <- fit$result$condition_2[1L]
           collection_tag <- .safe_filename(collection)
-          utils::write.table(
-            result,
-            file.path(gsea_dir, paste0("GSEA_", collection_tag, "_", file_prefix, "_",
-                                       .safe_filename(group), "_by_", group_col, ".tsv")),
-            sep = "\t", quote = FALSE, row.names = FALSE
+          gsea_file <- file.path(
+            gsea_dir, paste0("GSEA_", collection_tag, "_", file_prefix, "_",
+                             .safe_filename(group), "_by_", group_col, ".tsv")
           )
+          utils::write.table(result, gsea_file, sep = "\t", quote = FALSE,
+                             row.names = FALSE)
+          gsea_files <- c(gsea_files, gsea_file)
         } else if (!is.null(result)) {
           message("   [SKIP GSEA] ", group, ": no gene sets passed size filters.")
         }
       }
     }
   }
-  invisible(NULL)
+  invisible(gsea_files)
 }
 
 #' Process and save DEG results to TSV/TXT files

@@ -400,6 +400,9 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
 #'   depth (needed for between-sample DE). It has to happen here: the Assay5
 #'   conversion below discards the per-sample SCT models it needs. No-op with a
 #'   single sample.
+#' @param run_tsne Logical. Also calculate a seeded t-SNE embedding.
+#' @param tsne_perplexity Positive numeric. Requested t-SNE perplexity; capped
+#'   based on the number of cells.
 #' @return Processed Seurat object
 #' @export
 run_seurat_processing <- function(seurat_obj, 
@@ -409,7 +412,9 @@ run_seurat_processing <- function(seurat_obj,
                                   vars_to_regress = "percent.mt",
                                   split_by   = "orig.ident",
                                   prep_sct_findmarkers = TRUE,
-                                  seed       = 2861L) { 
+                                  seed       = 2861L,
+                                  run_tsne = FALSE,
+                                  tsne_perplexity = 30) {
   
   if (ncol(seurat_obj) < 10L) stop("Too few cells: ", ncol(seurat_obj))
   restore_rng <- .set_seed_preserving_state(seed)
@@ -504,6 +509,28 @@ run_seurat_processing <- function(seurat_obj,
   seurat_obj <- Seurat::RunUMAP(seurat_obj, reduction = cluster_red,
                                dims = actual_dims, seed.use = seed,
                                verbose = FALSE)
+  if (isTRUE(run_tsne)) {
+    if (!requireNamespace("Rtsne", quietly = TRUE)) {
+      message("   [SKIP t-SNE] Package 'Rtsne' is not installed.")
+    } else {
+      perplexity <- .effective_tsne_perplexity(ncol(seurat_obj), tsne_perplexity)
+      if (is.null(perplexity)) {
+        message("   [SKIP t-SNE] Too few cells for a valid perplexity.")
+      } else {
+        message("   [t-SNE] Running on ", cluster_red,
+                " with perplexity ", signif(perplexity, 4), ".")
+        seurat_obj <- safe_run(
+          Seurat::RunTSNE(
+            seurat_obj, reduction = cluster_red, dims = actual_dims,
+            seed.use = seed, reduction.name = "tsne", reduction.key = "tSNE_",
+            perplexity = perplexity
+          ),
+          label = "Seurat::RunTSNE",
+          fallback = seurat_obj
+        )
+      }
+    }
+  }
   # FindNeighbors() has no seed argument in Seurat. It can use RNG for ANN
   # indexing, so keep it inside the seeded scope established above.
   seurat_obj <- Seurat::FindNeighbors(seurat_obj, reduction = cluster_red, dims = actual_dims, verbose = FALSE)
@@ -511,6 +538,16 @@ run_seurat_processing <- function(seurat_obj,
                                     random.seed = seed, verbose = FALSE)
   
   return(seurat_obj)
+}
+
+.effective_tsne_perplexity <- function(n_cells, requested) {
+  if (!is.numeric(n_cells) || length(n_cells) != 1L ||
+      !is.finite(n_cells) || n_cells < 4L ||
+      !is.numeric(requested) || length(requested) != 1L ||
+      !is.finite(requested) || requested <= 0) {
+    return(NULL)
+  }
+  min(requested, (n_cells - 1) / 3 - .Machine$double.eps^0.5)
 }
 
 #' Assign cell-type labels using positive/negative marker gene rules

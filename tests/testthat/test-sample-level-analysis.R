@@ -76,7 +76,7 @@ test_that("sample-level analysis writes Hallmark GSEA and pseudobulk DEG separat
   pathways <- list(test_set = paste0("g", 1:15))
   collection <- "Test"
 
-  SPARKS:::.run_sample_level_analysis(
+  gsea_files <- SPARKS:::.run_sample_level_analysis(
     object, "cell_group", file.path(out, "Pseudobulk", "DEG"),
     file.path(out, "GSEA"), "Main", "Mouse",
     run_pseudobulk_deg = TRUE, run_gsea = TRUE, pathways = pathways,
@@ -88,6 +88,74 @@ test_that("sample-level analysis writes Hallmark GSEA and pseudobulk DEG separat
                            pattern = "^PseudobulkDEG_"), 1L)
   expect_length(list.files(file.path(out, "GSEA"),
                            pattern = "^GSEA_Test_"), 1L)
+  expect_length(gsea_files, 1L)
+  gsea_table <- utils::read.delim(gsea_files, check.names = FALSE)
+  expect_true(all(c("pathway", "group", "NES", "padj") %in% names(gsea_table)))
+  expect_identical(utils::head(gsea_table$group, 1L), "GroupA")
+})
+
+test_that("GSEA projection maps pathway NES to cells by group", {
+  object <- suppressWarnings(Seurat::CreateSeuratObject(
+    counts = matrix(
+      1:24, nrow = 2,
+      dimnames = list(c("gene-a", "gene-b"), paste0("cell", 1:12))
+    )
+  ))
+  object$cell_group <- rep(c("A", "B"), each = 6)
+  emb <- matrix(seq_len(24), ncol = 2,
+                dimnames = list(colnames(object), c("UMAP_1", "UMAP_2")))
+  object[["umap"]] <- SeuratObject::CreateDimReducObject(
+    embeddings = emb, key = "UMAP_", assay = "RNA"
+  )
+  gsea_dir <- tempfile("gsea-projection-")
+  dir.create(gsea_dir)
+  on.exit(unlink(gsea_dir, recursive = TRUE), add = TRUE)
+  utils::write.table(
+    data.frame(pathway = c("HALLMARK_A", "HALLMARK_A", "HALLMARK_B"),
+               group = c("A", "B", "A"), NES = c(1.5, -1.2, 0.5),
+               padj = c(0.01, 0.02, 0.2)),
+    file.path(gsea_dir, "GSEA_H_Main.tsv"), sep = "\t",
+    quote = FALSE, row.names = FALSE
+  )
+
+  paths <- SPARKS:::.generate_gsea_projection(
+    object, gsea_dir, group_by_col = "cell_group", reduction = "umap",
+    top_n = 1L
+  )
+
+  expect_length(paths, 1L)
+  expect_match(basename(paths), "HALLMARK_A")
+  expect_true(file.exists(paths))
+  expect_length(SPARKS:::.generate_gsea_projection(
+    object, gsea_dir, group_by_col = "missing", reduction = "umap"
+  ), 0L)
+
+  projection_files <- SPARKS:::.snapshot_result_files(gsea_dir)
+  expect_true(any(grepl("GSEA_Projection_", rownames(projection_files), fixed = TRUE)))
+})
+
+test_that("GSEA projection skips when embedding is missing", {
+  object <- suppressWarnings(Seurat::CreateSeuratObject(
+    counts = matrix(1:24, nrow = 2,
+                    dimnames = list(c("g1", "g2"), paste0("cell", 1:12)))
+  ))
+  object$cell_group <- rep(c("A", "B"), each = 6)
+  gsea_dir <- tempfile("gsea-no-embedding-")
+  dir.create(gsea_dir)
+  on.exit(unlink(gsea_dir, recursive = TRUE), add = TRUE)
+  utils::write.table(
+    data.frame(pathway = "HALLMARK_A", group = "A", NES = 1.5, padj = 0.01),
+    file.path(gsea_dir, "GSEA_H_Main.tsv"), sep = "\t",
+    quote = FALSE, row.names = FALSE
+  )
+
+  expect_message(
+    paths <- SPARKS:::.generate_gsea_projection(
+      object, gsea_dir, group_by_col = "cell_group", reduction = "umap"
+    ),
+    "Reduction 'umap' is not available"
+  )
+  expect_length(paths, 0L)
 })
 
 test_that("analysis output folders distinguish analysis types", {
