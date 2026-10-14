@@ -188,6 +188,8 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
                                        run_pseudobulk_deg = FALSE,
                                        run_gsea = TRUE,
                                        pathways = NULL,
+                                       pathway_cache = NULL,
+                                       pathway_loader = .hallmark_gene_sets,
                                        collection = "H",
                                        gsea_min_size = 10L,
                                        gsea_max_size = 500L) {
@@ -201,6 +203,15 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
     writeLines(message_text, file.path(gsea_dir, stem))
     invisible(NULL)
   }
+  if (run_gsea && !requireNamespace("fgsea", quietly = TRUE)) {
+    reason <- "Ranked GSEA requires package 'fgsea'."
+    message("   [SKIP GSEA] ", reason)
+    write_gsea_status(reason)
+    run_gsea <- FALSE
+  }
+  if (!isTRUE(run_pseudobulk_deg) && !isTRUE(run_gsea)) {
+    return(invisible(NULL))
+  }
   if (!requireNamespace("edgeR", quietly = TRUE)) {
     task <- c(if (run_pseudobulk_deg) "pseudobulk DEG", if (run_gsea) "ranked GSEA")
     reason <- paste(paste(task, collapse = " and "),
@@ -208,12 +219,6 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
     message("   [SKIP] ", reason)
     write_gsea_status(reason)
     return(invisible(NULL))
-  }
-  if (run_gsea && !requireNamespace("fgsea", quietly = TRUE)) {
-    reason <- "Ranked GSEA requires package 'fgsea'."
-    message("   [SKIP GSEA] ", reason)
-    write_gsea_status(reason)
-    run_gsea <- FALSE
   }
   md <- seurat_obj@meta.data
   missing <- setdiff(c(group_col, condition_col, sample_col), colnames(md))
@@ -228,18 +233,6 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
   groups <- groups[!is.na(groups)]
   gsea_files <- character(0)
   if (run_pseudobulk_deg) make_dir(pseudobulk_dir)
-  if (run_gsea && is.null(pathways)) {
-    pathways <- tryCatch(.hallmark_gene_sets(species, collection), error = function(e) {
-      message("   [SKIP GSEA] Could not load MSigDB collection '", collection,
-              "' gene sets: ", conditionMessage(e))
-      NULL
-    })
-    if (is.null(pathways)) {
-      write_gsea_status(paste0("MSigDB collection '", collection,
-                               "' gene sets are unavailable."))
-    }
-  }
-
   for (group in groups) {
     aggregated <- tryCatch(
       .aggregate_group_counts(seurat_obj, group_col, group, sample_col, condition_col),
@@ -263,7 +256,35 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
       next
     }
     fit$result$cluster <- group
-    if (run_gsea && is.null(pathways)) {
+    stats <- NULL
+    max_size <- 0L
+    gsea_ready <- FALSE
+    if (run_gsea) {
+      stats <- fit$result$rank_stat
+      names(stats) <- fit$result$gene
+      stats <- sort(stats[is.finite(stats)], decreasing = TRUE)
+      max_size <- min(gsea_max_size, length(stats) - 1L)
+      gsea_ready <- length(stats) >= 2L && max_size >= gsea_min_size
+      if (!gsea_ready) {
+        message("   [SKIP GSEA] ", group,
+                ": too few ranked genes for the requested pathway size range.")
+        write_gsea_status(
+          paste0("Ranked GSEA was not run for group '", group,
+                 "': too few ranked genes for the requested pathway size range."),
+          group
+        )
+      }
+    }
+    if (run_gsea && gsea_ready && is.null(pathways)) {
+      pathways <- .get_gsea_pathways(
+        species, collection, pathway_cache, pathway_loader
+      )
+      if (is.null(pathways)) {
+        write_gsea_status(paste0("MSigDB collection '", collection,
+                                 "' gene sets are unavailable."))
+      }
+    }
+    if (run_gsea && gsea_ready && is.null(pathways)) {
       message("   [SKIP GSEA] ", group, ": MSigDB collection '", collection,
               "' gene sets are unavailable; edgeR model completed.")
     }
@@ -275,54 +296,40 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
       )
     }
 
-    if (run_gsea && !is.null(pathways)) {
-      stats <- fit$result$rank_stat
-      names(stats) <- fit$result$gene
-      stats <- sort(stats[is.finite(stats)], decreasing = TRUE)
-      max_size <- min(gsea_max_size, length(stats) - 1L)
-      if (length(stats) < 2L || max_size < gsea_min_size) {
-        message("   [SKIP GSEA] ", group,
-                ": too few ranked genes for the requested pathway size range.")
-        write_gsea_status(
-          paste0("Ranked GSEA was not run for group '", group,
-                 "': too few ranked genes for the requested pathway size range."),
-          group
-        )
-      } else {
-        result <- tryCatch(
-          fgsea::fgseaMultilevel(pathways, stats, minSize = gsea_min_size,
-                                 maxSize = max_size),
-          error = function(e) {
-            message("   [SKIP GSEA] ", group, ": ", conditionMessage(e))
-            write_gsea_status(
-              paste0("Ranked GSEA failed for group '", group, "': ",
-                     conditionMessage(e)), group
-            )
-            NULL
-          }
-        )
-        if (!is.null(result) && nrow(result) > 0L) {
-          make_dir(gsea_dir)
-          result$leadingEdge <- vapply(result$leadingEdge, paste,
-                                       collapse = ";", character(1))
-          result$group <- group
-          result$condition_1 <- fit$result$condition_1[1L]
-          result$condition_2 <- fit$result$condition_2[1L]
-          collection_tag <- .safe_filename(collection)
-          gsea_file <- file.path(
-            gsea_dir, paste0("GSEA_", collection_tag, "_", file_prefix, "_",
-                             .safe_filename(group), "_by_", group_col, ".tsv")
-          )
-          utils::write.table(result, gsea_file, sep = "\t", quote = FALSE,
-                             row.names = FALSE)
-          gsea_files <- c(gsea_files, gsea_file)
-        } else if (!is.null(result)) {
-          message("   [SKIP GSEA] ", group, ": no gene sets passed size filters.")
+    if (run_gsea && gsea_ready && !is.null(pathways)) {
+      result <- tryCatch(
+        fgsea::fgseaMultilevel(pathways, stats, minSize = gsea_min_size,
+                               maxSize = max_size),
+        error = function(e) {
+          message("   [SKIP GSEA] ", group, ": ", conditionMessage(e))
           write_gsea_status(
-            paste0("Ranked GSEA returned no pathways passing size filters for group '",
-                   group, "'."), group
+            paste0("Ranked GSEA failed for group '", group, "': ",
+                   conditionMessage(e)), group
           )
+          NULL
         }
+      )
+      if (!is.null(result) && nrow(result) > 0L) {
+        make_dir(gsea_dir)
+        result$leadingEdge <- vapply(result$leadingEdge, paste,
+                                     collapse = ";", character(1))
+        result$group <- group
+        result$condition_1 <- fit$result$condition_1[1L]
+        result$condition_2 <- fit$result$condition_2[1L]
+        collection_tag <- .safe_filename(collection)
+        gsea_file <- file.path(
+          gsea_dir, paste0("GSEA_", collection_tag, "_", file_prefix, "_",
+                           .safe_filename(group), "_by_", group_col, ".tsv")
+        )
+        utils::write.table(result, gsea_file, sep = "\t", quote = FALSE,
+                           row.names = FALSE)
+        gsea_files <- c(gsea_files, gsea_file)
+      } else if (!is.null(result)) {
+        message("   [SKIP GSEA] ", group, ": no gene sets passed size filters.")
+        write_gsea_status(
+          paste0("Ranked GSEA returned no pathways passing size filters for group '",
+                 group, "'."), group
+        )
       }
     }
   }

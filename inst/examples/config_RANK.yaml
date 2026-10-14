@@ -12,6 +12,14 @@ cell_cycle:
   run: false
   regress: false
 
+# RANK does not have a usable replicate design for ranked pseudobulk GSEA.
+# Keep per-cell escape scoring disabled as well.
+gsea:
+  run: false
+
+escape:
+  run: false
+
 genes:
   genes_to_plot:
     - "Sphk1"

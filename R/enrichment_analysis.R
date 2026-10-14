@@ -139,3 +139,22 @@ generate_escape_plots <- function(seurat_obj, method = "ssGSEA", group_col,
   names(pathways) <- vapply(as.list(sets), GSEABase::setName, character(1))
   pathways[lengths(pathways) > 0L]
 }
+
+.get_gsea_pathways <- function(species, collection, pathway_cache = NULL,
+                               pathway_loader = .hallmark_gene_sets) {
+  cache_key <- paste(tolower(species), tolower(collection), sep = "::")
+  if (is.environment(pathway_cache) &&
+      exists(cache_key, envir = pathway_cache, inherits = FALSE)) {
+    return(get(cache_key, envir = pathway_cache, inherits = FALSE))
+  }
+
+  pathways <- tryCatch(pathway_loader(species, collection), error = function(e) {
+    message("   [SKIP GSEA] Could not load MSigDB collection '", collection,
+            "' gene sets: ", conditionMessage(e))
+    NULL
+  })
+  if (is.environment(pathway_cache)) {
+    assign(cache_key, pathways, envir = pathway_cache)
+  }
+  pathways
+}

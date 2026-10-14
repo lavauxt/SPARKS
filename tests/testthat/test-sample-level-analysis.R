@@ -122,6 +122,140 @@ test_that("GSEA writes a status explanation when replicate design is insufficien
   expect_true(any(grepl("GSEA_Status_", rownames(snapshot), fixed = TRUE)))
 })
 
+test_that("GSEA does not load MSigDB when replicate design is insufficient", {
+  skip_if_not_installed("edgeR")
+
+  counts <- matrix(
+    c(10, 12, 14, 16, 20, 21, 19, 22, 11, 13, 15, 17, 18, 20, 23, 24), nrow = 2,
+    dimnames = list(c("g1", "g2"), paste0("cell", seq_len(8)))
+  )
+  object <- suppressWarnings(Seurat::CreateSeuratObject(counts = counts))
+  object$group <- "A"
+  object$sample <- rep(c("s1", "s2"), each = 4)
+  object$condition <- rep(c("WT", "KO"), each = 4)
+  loader_calls <- 0L
+
+  expect_message(
+    SPARKS:::.run_sample_level_analysis(
+      object, "group", tempfile("pseudobulk-"), tempfile("gsea-"),
+      "Main", "Mouse", run_gsea = TRUE,
+      pathway_loader = function(species, collection) {
+        loader_calls <<- loader_calls + 1L
+        list(test = c("g1", "g2"))
+      }
+    ),
+    "at least 2 samples per condition"
+  )
+  expect_identical(loader_calls, 0L)
+})
+
+test_that("GSEA pathway cache loads each collection once", {
+  cache <- new.env(parent = emptyenv())
+  loader_calls <- 0L
+  loader <- function(species, collection) {
+    loader_calls <<- loader_calls + 1L
+    list(test = c("g1", "g2"))
+  }
+
+  expect_identical(SPARKS:::.get_gsea_pathways("Mouse", "H", cache, loader),
+                   list(test = c("g1", "g2")))
+  expect_identical(SPARKS:::.get_gsea_pathways("Mouse", "H", cache, loader),
+                   list(test = c("g1", "g2")))
+  expect_identical(loader_calls, 1L)
+
+  failed_cache <- new.env(parent = emptyenv())
+  fail_loader <- function(species, collection) {
+    loader_calls <<- loader_calls + 1L
+    stop("unavailable")
+  }
+  expect_message(
+    SPARKS:::.get_gsea_pathways("Mouse", "H", failed_cache, fail_loader),
+    "Could not load MSigDB collection"
+  )
+  expect_message(
+    pathways <- SPARKS:::.get_gsea_pathways(
+      "Mouse", "H", failed_cache, fail_loader
+    ),
+    NA
+  )
+  expect_null(pathways)
+  expect_identical(loader_calls, 2L)
+})
+
+test_that("disabled GSEA does not load a pathway collection", {
+  loader_calls <- 0L
+  expect_null(SPARKS:::.run_sample_level_analysis(
+    seurat_obj = NULL, group_col = "group", pseudobulk_dir = tempfile(),
+    gsea_dir = tempfile(), file_prefix = "Main", species = "Mouse",
+    run_pseudobulk_deg = FALSE, run_gsea = FALSE,
+    pathway_loader = function(species, collection) {
+      loader_calls <<- loader_calls + 1L
+      list(test = "g1")
+    }
+  ))
+  expect_identical(loader_calls, 0L)
+})
+
+test_that("GSEA skips before loading MSigDB when fgsea is unavailable", {
+  skip_if_not_installed("edgeR")
+  skip_if(requireNamespace("fgsea", quietly = TRUE))
+
+  counts <- matrix(
+    c(10, 12, 14, 16, 20, 21, 19, 22, 11, 13, 15, 17, 18, 20, 23, 24), nrow = 2,
+    dimnames = list(c("g1", "g2"), paste0("cell", seq_len(8)))
+  )
+  object <- suppressWarnings(Seurat::CreateSeuratObject(counts = counts))
+  object$group <- "A"
+  object$sample <- rep(paste0("s", seq_len(4)), each = 2)
+  object$condition <- rep(c("WT", "KO"), each = 4)
+  loader_calls <- 0L
+
+  SPARKS:::.run_sample_level_analysis(
+    object, "group", tempfile("pseudobulk-"), tempfile("gsea-"),
+    "Main", "Mouse", run_gsea = TRUE,
+    pathway_loader = function(species, collection) {
+      loader_calls <<- loader_calls + 1L
+      list(test = c("g1", "g2"))
+    }
+  )
+  expect_identical(loader_calls, 0L)
+})
+
+test_that("GSEA loads its pathway collection only once per cache", {
+  skip_if_not_installed("edgeR")
+  skip_if_not_installed("fgsea")
+
+  set.seed(6274)
+  counts <- matrix(stats::rpois(800, lambda = 25), nrow = 50, ncol = 16)
+  rownames(counts) <- paste0("g", seq_len(nrow(counts)))
+  colnames(counts) <- paste0("cell", seq_len(ncol(counts)))
+  object <- suppressWarnings(Seurat::CreateSeuratObject(counts = counts))
+  object$group <- rep(c("A", "B"), each = 8)
+  object$sample <- c(rep(paste0("A", 1:4), each = 2),
+                     rep(paste0("B", 1:4), each = 2))
+  object$condition <- rep(c(rep("Control", 2), rep("Treatment", 2)), times = 2)
+  out <- tempfile("gsea-cache-")
+  on.exit(unlink(out, recursive = TRUE), add = TRUE)
+  pathway_cache <- new.env(parent = emptyenv())
+  loader_calls <- 0L
+  pathway_loader <- function(species, collection) {
+    loader_calls <<- loader_calls + 1L
+    list(test_set = paste0("g", 1:15))
+  }
+
+  for (group in c("A", "B")) {
+    group_object <- subset(object, cells = colnames(object)[object$group == group])
+    group_object$group <- "group"
+    SPARKS:::.run_sample_level_analysis(
+      group_object, "group", file.path(out, "DEG"), file.path(out, "GSEA"),
+      "Main", "Mouse", run_gsea = TRUE, pathway_cache = pathway_cache,
+      pathway_loader = pathway_loader, gsea_min_size = 5L, gsea_max_size = 20L
+    )
+  }
+
+  expect_identical(loader_calls, 1L)
+})
+
 test_that("GSEA projection maps pathway NES to cells by group", {
   object <- suppressWarnings(Seurat::CreateSeuratObject(
     counts = matrix(

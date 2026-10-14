@@ -78,6 +78,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
   }
 
   cfg$sample_metadata <- sample_metadata
+  gsea_pathway_cache <- new.env(parent = emptyenv())
 
   for (comp_group in unique(sample_metadata$comparison_group)) {
     message("\n##################################")
@@ -258,14 +259,16 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       base_dir     = cfg$pipeline$results_dir,
       suffix       = comp_group,
       deg_color    = cfg$plot$deg_color_main,
-      cfg          = cfg
+      cfg          = cfg,
+      gsea_pathway_cache = gsea_pathway_cache
     )
 
     for (s in cfg$subsets) {
       safe_run(
         .run_subset(main_obj = merged_obj, subset_cfg = s,
                     base_dir = cfg$pipeline$results_dir,
-                    suffix   = comp_group, cfg = cfg),
+                    suffix   = comp_group, cfg = cfg,
+                    gsea_pathway_cache = gsea_pathway_cache),
         label = paste0("subset: ", s$display_name)
       )
     }
@@ -373,8 +376,12 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
 #' @return NULL
 #' @export
 run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
-                               base_dir, suffix, deg_color, cfg) {
+                               base_dir, suffix, deg_color, cfg,
+                               gsea_pathway_cache = NULL) {
   message("\n=== Analysis Unit: ", display_name, " ===")
+  if (!is.environment(gsea_pathway_cache)) {
+    gsea_pathway_cache <- new.env(parent = emptyenv())
+  }
 
   valid_groupings <- groupings[groupings %in% colnames(seurat_obj@meta.data)]
   skipped         <- setdiff(groupings, valid_groupings)
@@ -389,25 +396,6 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
   }
 
   gsea_pathways <- NULL
-  if (isTRUE(cfg$gsea$run) && requireNamespace("edgeR", quietly = TRUE) &&
-      requireNamespace("fgsea", quietly = TRUE)) {
-    gsea_pathways <- tryCatch(
-      .hallmark_gene_sets(cfg$pipeline$species_target, cfg$gsea$collection),
-      error = function(e) {
-        message("   [SKIP GSEA] Could not load MSigDB collection '",
-                cfg$gsea$collection, "' gene sets: ", conditionMessage(e))
-        NULL
-      }
-    )
-    if (is.null(gsea_pathways)) {
-      message("   [SKIP GSEA] No gene sets loaded for MSigDB collection '",
-              cfg$gsea$collection, "'.")
-    }
-  } else if (isTRUE(cfg$gsea$run) && !requireNamespace("edgeR", quietly = TRUE)) {
-    message("   [SKIP GSEA] Ranked GSEA requires Bioconductor package 'edgeR'.")
-  } else if (isTRUE(cfg$gsea$run) && !requireNamespace("fgsea", quietly = TRUE)) {
-    message("   [SKIP GSEA] Ranked GSEA requires package 'fgsea'.")
-  }
 
   # Older or externally generated objects may still retain an SCTAssay.
   prep_status <- seurat_obj@misc$sparks_prep_sct_findmarkers %||% "unknown"
@@ -451,9 +439,11 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
       deg_color    = deg_color,
       cfg          = cfg,
       gsea_pathways = gsea_pathways,
-      gsea_plot_projection = isTRUE(cfg$gsea$plot_projection),
-      gsea_projection_top_n = cfg$gsea$projection_top_n,
-      skip_cell_deg = skip_cell_deg
+      gsea_plot_projection = isTRUE(cfg$gsea$run) &&
+        isTRUE(cfg$gsea$plot_projection),
+      gsea_projection_top_n = cfg$gsea$projection_top_n %||% 10L,
+      skip_cell_deg = skip_cell_deg,
+      gsea_pathway_cache = gsea_pathway_cache
     )
   }
 
@@ -481,7 +471,8 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
                                    deg_color, cfg, gsea_pathways = NULL,
                                    gsea_plot_projection = TRUE,
                                    gsea_projection_top_n = 10L,
-                                   skip_cell_deg = FALSE) {
+                                   skip_cell_deg = FALSE,
+                                   gsea_pathway_cache = NULL) {
   message("   -> Grouping: ", group_col)
 
   group_dir <- file.path(base_dir, suffix, file_prefix, group_col)
@@ -579,6 +570,7 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
       run_pseudobulk_deg = isTRUE(cfg$pseudobulk$run),
       run_gsea = isTRUE(cfg$gsea$run),
       pathways = gsea_pathways,
+      pathway_cache = gsea_pathway_cache,
       collection = cfg$gsea$collection,
       gsea_min_size = cfg$gsea$min_size,
       gsea_max_size = cfg$gsea$max_size
@@ -729,7 +721,8 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   }
 }
 
-.run_subset <- function(main_obj, subset_cfg, base_dir, suffix, cfg) {
+.run_subset <- function(main_obj, subset_cfg, base_dir, suffix, cfg,
+                        gsea_pathway_cache = NULL) {
   message("\n=== Subset: ", subset_cfg$display_name, " ===")
 
   match_data <- as.character(main_obj@meta.data[[subset_cfg$match_col]])
@@ -798,7 +791,8 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   run_analysis_unit(seurat_obj = sub_obj, display_name = subset_cfg$display_name,
                     groupings  = groupings, genes_list = sub_genes,
                     base_dir   = base_dir, suffix = suffix,
-                    deg_color  = subset_cfg$deg_color, cfg = cfg)
+                    deg_color  = subset_cfg$deg_color, cfg = cfg,
+                    gsea_pathway_cache = gsea_pathway_cache)
 
   if (length(sub_genes) > 0) {
     message("   --> Generating Subcluster Heatmaps for: ", subset_cfg$display_name)

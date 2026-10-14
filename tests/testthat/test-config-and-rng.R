@@ -194,8 +194,32 @@ test_that("sample-level and Hallmark analysis config has deliberate defaults", {
   expect_identical(loaded$gsea$collection, "H")
   expect_true(loaded$gsea$plot_projection)
   expect_equal(loaded$gsea$projection_top_n, 10L)
+  expect_false(loaded$escape$run)
   expect_false(loaded$processing$run_tsne)
   expect_equal(loaded$processing$tsne_perplexity, 30)
+})
+
+test_that("optional enrichment packages are Suggests, not startup Imports", {
+  description <- read.dcf(testthat::test_path("..", "..", "DESCRIPTION"))
+  imports <- strsplit(description[1, "Imports"], ",\\s*")[[1]]
+  suggests <- strsplit(description[1, "Suggests"], ",\\s*")[[1]]
+
+  expect_false(any(c("escape", "msigdb", "AUCell", "UCell", "GSVA") %in% imports))
+  expect_true(all(c("escape", "msigdb", "AUCell", "UCell", "GSVA") %in% suggests))
+})
+
+test_that("RANK overrides disable optional pathway scoring", {
+  base <- yaml::read_yaml(testthat::test_path(
+    "..", "..", "inst", "config_template_mouse.yaml"
+  ))
+  override <- yaml::read_yaml(testthat::test_path(
+    "..", "..", "inst", "examples", "config_RANK.yaml"
+  ))
+  config <- SPARKS:::.merge_config(base, override)
+
+  expect_false(config$gsea$run)
+  expect_false(config$escape$run)
+  expect_identical(config$pipeline$species_target, "Mouse")
 })
 
 test_that("t-SNE perplexity and GSEA projection count are validated", {
