@@ -79,6 +79,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
 
   cfg$sample_metadata <- sample_metadata
   gsea_pathway_cache <- new.env(parent = emptyenv())
+  escape_gene_set_cache <- new.env(parent = emptyenv())
 
   for (comp_group in unique(sample_metadata$comparison_group)) {
     message("\n##################################")
@@ -234,14 +235,25 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       singler_cfg    = cfg$singler
     )
 
+    escape_gene_sets <- NULL
     if (isTRUE(cfg$escape$run)) {
-      merged_obj <- run_escape_enrichment(
-        seurat_obj = merged_obj,
-        species    = cfg$pipeline$species_target,
-        library    = cfg$escape$library,
-        method     = cfg$escape$method,
-        min_size   = cfg$escape$min_size
-      )
+      if (!is.null(escape_gene_set_cache)) {
+        escape_gene_sets <- .get_escape_gene_sets(
+          cfg$pipeline$species_target, cfg$escape$library,
+          gene_set_cache = escape_gene_set_cache
+        )
+      }
+      for (escape_method in cfg$escape$methods) {
+        merged_obj <- run_escape_enrichment(
+          seurat_obj = merged_obj,
+          species    = cfg$pipeline$species_target,
+          library    = cfg$escape$library,
+          method     = escape_method,
+          min_size   = cfg$escape$min_size,
+          gene_sets  = escape_gene_sets,
+          gene_set_cache = escape_gene_set_cache
+        )
+      }
     }
 
 
@@ -695,9 +707,11 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
       }
 
   if (isTRUE(cfg$escape$run)) {
-    generate_escape_plots(seurat_obj, method = cfg$escape$method,
-                          group_col = group_col, out_dir = group_dir,
-                          prefix = file_prefix)
+    for (escape_method in cfg$escape$methods) {
+      generate_escape_plots(seurat_obj, method = escape_method,
+                            group_col = group_col, out_dir = group_dir,
+                            prefix = file_prefix)
+    }
   } else {
     message("   [INFO] Per-cell escape scoring disabled by configuration.")
   }

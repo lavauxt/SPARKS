@@ -398,22 +398,42 @@ test_that("Hallmark escape scoring filters to detected genes for UCell and AUCel
   skip_if_not_installed("escape")
   skip_if_not_installed("msigdb")
 
-  genes <- c(.hallmark_gene_sets("Human", "H")[[1]], paste0("TEST", 1:270))
-  counts <- matrix(
-    stats::rpois(length(genes) * 20, lambda = 4),
-    nrow = length(genes),
-    dimnames = list(genes, paste0("cell", seq_len(20)))
-  )
+  pathways <- SPARKS:::.hallmark_gene_sets("Human", "H")
+  genes <- unique(c(pathways[[1]], paste0("TEST", 1:270)))
+  set.seed(6571)
+  counts <- matrix(stats::rpois(length(genes) * 2, lambda = 4),
+                   nrow = length(genes),
+                   dimnames = list(genes, c("WT_cell", "KO_cell")))
   object <- suppressWarnings(Seurat::CreateSeuratObject(counts = counts))
-  object <- Seurat::NormalizeData(object, verbose = FALSE)
+  object$condition <- c("WT", "KO")
 
   for (method in c("UCell", "AUCell")) {
     scored <- SPARKS::run_escape_enrichment(
       object, species = "Human", library = "H", method = method,
-      min_size = 5L
+      min_size = 5L, gene_sets = pathways
     )
     expect_true(paste0("escape.", method) %in% names(scored@assays))
+    scores <- SeuratObject::LayerData(
+      scored, assay = paste0("escape.", method), layer = "data"
+    )
+    expect_identical(colnames(scores), colnames(object))
+    expected_pathways <- pathways[lengths(lapply(pathways, intersect, genes)) >= 5L]
+    expect_equal(nrow(scores), length(expected_pathways))
   }
+})
+
+test_that("escape gene sets are cached across scoring methods", {
+  skip_if_not_installed("escape")
+  skip_if_not_installed("msigdb")
+  cache <- new.env(parent = emptyenv())
+
+  sets <- SPARKS:::.get_escape_gene_sets("Human", "H", cache)
+  expect_type(sets, "list")
+  expect_identical(
+    SPARKS:::.get_escape_gene_sets("Human", "H", cache),
+    sets
+  )
+  expect_true(exists("human::H", envir = cache, inherits = FALSE))
 })
 
 test_that("report file tracking excludes stale result tables", {

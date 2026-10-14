@@ -4,25 +4,22 @@
 #' @param library Character. e.g., "H" for Hallmark, "C5" for GO
 #' @param method Character. e.g., "ssGSEA", "UCell", "AUCell"
 #' @param min_size Integer. Min genes in a pathway.
+#' @param gene_sets Optional named list of pathways; if NULL, load from escape.
+#' @param gene_set_cache Optional environment used to reuse loaded gene sets.
 #' @return Seurat object with escape assay added
 #' @export
 run_escape_enrichment <- function(seurat_obj, species = "Mouse", library = "H",
-                                  method = "ssGSEA", min_size = 5) {
+                                  method = "ssGSEA", min_size = 5,
+                                  gene_sets = NULL, gene_set_cache = NULL) {
   if (!requireNamespace("escape", quietly = TRUE)) {
     message("   [SKIP Escape] Package 'escape' is not installed.")
     return(seurat_obj)
   }
-  if (!requireNamespace("msigdb", quietly = TRUE)) {
-    message("   [SKIP Escape] Package 'msigdb' is not installed; no gene sets loaded.")
-    return(seurat_obj)
-  }
 
   message("--- Running escape pathway enrichment (", method, ") ---")
-  esp_species <- if (tolower(species) == "mouse") "Mus musculus" else "Homo sapiens"
-  gene_sets <- safe_run(
-    escape::getGeneSets(species = esp_species, library = library),
-    label = "escape::getGeneSets"
-  )
+  if (is.null(gene_sets)) {
+    gene_sets <- .get_escape_gene_sets(species, library, gene_set_cache)
+  }
   if (is.null(gene_sets) || length(gene_sets) == 0L) {
     message("   [SKIP Escape] No gene sets were returned.")
     return(seurat_obj)
@@ -68,6 +65,31 @@ run_escape_enrichment <- function(seurat_obj, species = "Mouse", library = "H",
     message("   [SKIP Escape] Enrichment did not create assay '", assay_name, "'.")
   }
   seurat_obj
+}
+
+.get_escape_gene_sets <- function(species, library, gene_set_cache = NULL) {
+  cache_key <- paste(tolower(species), paste(library, collapse = ","), sep = "::")
+  if (is.environment(gene_set_cache) &&
+      exists(cache_key, envir = gene_set_cache, inherits = FALSE)) {
+    return(get(cache_key, envir = gene_set_cache, inherits = FALSE))
+  }
+
+  if (!requireNamespace("escape", quietly = TRUE)) return(NULL)
+  if (!requireNamespace("msigdb", quietly = TRUE)) {
+    message("   [SKIP Escape] Package 'msigdb' is not installed; no gene sets loaded.")
+    if (is.environment(gene_set_cache)) assign(cache_key, NULL, envir = gene_set_cache)
+    return(NULL)
+  }
+
+  esp_species <- if (tolower(species) == "mouse") "Mus musculus" else "Homo sapiens"
+  gene_sets <- safe_run(
+    escape::getGeneSets(species = esp_species, library = library),
+    label = "escape::getGeneSets"
+  )
+  if (is.environment(gene_set_cache)) {
+    assign(cache_key, gene_sets, envir = gene_set_cache)
+  }
+  gene_sets
 }
 
 #' Generate and save escape heatmaps

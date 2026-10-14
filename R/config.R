@@ -241,6 +241,15 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
 
   cfg$escape$run      <- cfg$escape$run      %||% FALSE
   cfg$escape$method   <- cfg$escape$method   %||% "ssGSEA"
+  cfg$escape$methods  <- cfg$escape$methods  %||% cfg$escape$method
+  valid_escape_methods <- c("ssGSEA", "UCell", "AUCell", "GSVA")
+  if (!is.character(cfg$escape$methods) || length(cfg$escape$methods) == 0L ||
+      anyNA(cfg$escape$methods) ||
+      any(!cfg$escape$methods %in% valid_escape_methods)) {
+    stop("escape$methods must contain one or more of: ",
+         paste(valid_escape_methods, collapse = ", "), ".", call. = FALSE)
+  }
+  cfg$escape$methods <- unique(cfg$escape$methods)
   cfg$escape$library  <- cfg$escape$library  %||% "H"
   cfg$escape$min_size <- cfg$escape$min_size %||% 5
 

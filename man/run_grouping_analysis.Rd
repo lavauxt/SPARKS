@@ -16,7 +16,8 @@ run_grouping_analysis(
   gsea_pathways = NULL,
   gsea_plot_projection = TRUE,
   gsea_projection_top_n = 10L,
-  skip_cell_deg = FALSE
+  skip_cell_deg = FALSE,
+  gsea_pathway_cache = NULL
 )
 }
 \arguments{

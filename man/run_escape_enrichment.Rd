@@ -9,7 +9,9 @@ run_escape_enrichment(
   species = "Mouse",
   library = "H",
   method = "ssGSEA",
-  min_size = 5
+  min_size = 5,
+  gene_sets = NULL,
+  gene_set_cache = NULL
 )
 }
 \arguments{
@@ -22,6 +24,10 @@ run_escape_enrichment(
 \item{method}{Character. e.g., "ssGSEA", "UCell", "AUCell"}
 
 \item{min_size}{Integer. Min genes in a pathway.}
+
+\item{gene_sets}{Optional named list of pathways; if NULL, load from escape.}
+
+\item{gene_set_cache}{Optional environment used to reuse loaded gene sets.}
 }
 \value{
 Seurat object with escape assay added

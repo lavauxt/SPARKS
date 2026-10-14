@@ -13,12 +13,16 @@ cell_cycle:
   regress: false
 
 # RANK does not have a usable replicate design for ranked pseudobulk GSEA.
-# Keep per-cell escape scoring disabled as well.
+# Per-cell pathway scores are descriptive and do not require biological
+# replicates; they are not tests of WT-vs-KO differences.
 gsea:
   run: false
 
 escape:
-  run: false
+  run: true
+  methods: ["UCell", "AUCell"]
+  library: "H"
+  min_size: 5
 
 genes:
   genes_to_plot:

@@ -195,6 +195,7 @@ test_that("sample-level and Hallmark analysis config has deliberate defaults", {
   expect_true(loaded$gsea$plot_projection)
   expect_equal(loaded$gsea$projection_top_n, 10L)
   expect_false(loaded$escape$run)
+  expect_identical(loaded$escape$methods, "ssGSEA")
   expect_false(loaded$processing$run_tsne)
   expect_equal(loaded$processing$tsne_perplexity, 30)
 })
@@ -208,7 +209,7 @@ test_that("optional enrichment packages are Suggests, not startup Imports", {
   expect_true(all(c("escape", "msigdb", "AUCell", "UCell", "GSVA") %in% suggests))
 })
 
-test_that("RANK overrides disable optional pathway scoring", {
+test_that("RANK override enables per-cell UCell and AUCell without GSEA", {
   base <- yaml::read_yaml(testthat::test_path(
     "..", "..", "inst", "config_template_mouse.yaml"
   ))
@@ -218,8 +219,23 @@ test_that("RANK overrides disable optional pathway scoring", {
   config <- SPARKS:::.merge_config(base, override)
 
   expect_false(config$gsea$run)
-  expect_false(config$escape$run)
+  expect_true(config$escape$run)
+  expect_identical(config$escape$methods, c("UCell", "AUCell"))
   expect_identical(config$pipeline$species_target, "Mouse")
+  expect_false(base$escape$run)
+})
+
+test_that("escape scoring methods are validated", {
+  cfg <- list(
+    pipeline = list(), qc = list(), processing = list(), deg = list(),
+    plot = list(), species = list(), singler = list(), groupings_main = NULL,
+    escape = list(methods = c("UCell", "bogus"))
+  )
+  file <- tempfile(fileext = ".yml")
+  on.exit(unlink(file), add = TRUE)
+  yaml::write_yaml(cfg, file)
+
+  expect_error(SPARKS::load_pipeline_config(file), "escape\\$methods")
 })
 
 test_that("t-SNE perplexity and GSEA projection count are validated", {

@@ -12,7 +12,8 @@ run_analysis_unit(
   base_dir,
   suffix,
   deg_color,
-  cfg
+  cfg,
+  gsea_pathway_cache = NULL
 )
 }
 \arguments{
