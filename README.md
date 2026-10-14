@@ -74,13 +74,13 @@ Copy the provided mouse template and modify it for your study. You can override 
 library(SPARKS)
 
 # Run the complete analysis
-# For mouse
+# For the RANK mouse dataset
 sparks(
   base_config_path     = "./inst/config_template_mouse.yaml",
-  override_config_path = "./inst/examples/config.yaml"
+  override_config_path = "./inst/examples/config_RANK.yaml"
 )
 
-# For human
+# For human (generic overrides; customize config.yaml for your dataset)
 sparks(
   base_config_path     = "./inst/config_template_human.yaml",
   override_config_path = "./inst/examples/config.yaml"

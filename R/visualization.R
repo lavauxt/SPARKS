@@ -44,6 +44,7 @@ generate_feature_plots <- function(seurat_obj, genes, out_dir, prefix,
         split.by = split_by,
         assay = assay,
         pt.size = 1,
+        # Use a shared colour range across condition panels.
         keep.scale = "all",
         combine = TRUE
       ) + patchwork::plot_annotation(
@@ -789,7 +790,7 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
         x = "Features", y = group_by_col
       ) +
       ggplot2::guides(
-        colour = if (has_condition && scale_dotplot && n_groups >= 5L) {
+        colour = if (has_condition) {
           ggplot2::guide_legend(title = "Condition")
         } else {
           ggplot2::guide_colorbar(title = "Avg Expression",
