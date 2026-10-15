@@ -11,7 +11,8 @@ generate_feature_plots(
   prefix,
   reduction = "umap",
   assay = "RNA",
-  split_by = "condition"
+  split_by = "condition",
+  keep_scale = "all"
 )
 }
 \arguments{
