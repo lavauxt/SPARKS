@@ -8,7 +8,13 @@
 #' @export
 generate_feature_plots <- function(seurat_obj, genes, out_dir, prefix,
                                    reduction = "umap", assay = "RNA",
-                                   split_by = "condition") {
+                                   split_by = "condition",
+                                   keep_scale = "all") {
+
+  if (!is.character(keep_scale) || length(keep_scale) != 1L ||
+      is.na(keep_scale) || !keep_scale %in% c("feature", "all")) {
+    stop("`keep_scale` must be either 'feature' or 'all'.", call. = FALSE)
+  }
 
   genes <- .filter_present_genes(genes, seurat_obj, "FeaturePlot", assay = assay)
   if (is.null(genes)) return(invisible(NULL))
@@ -44,8 +50,7 @@ generate_feature_plots <- function(seurat_obj, genes, out_dir, prefix,
         split.by = split_by,
         assay = assay,
         pt.size = 1,
-        # Use a shared colour range across condition panels.
-        keep.scale = "all",
+        keep.scale = keep_scale,
         combine = TRUE
       ) + patchwork::plot_annotation(
         title = paste("Expression of", gene, "in", prefix)

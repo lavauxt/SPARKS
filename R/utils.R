@@ -333,7 +333,7 @@ get_junk_pattern <- function(species = "Mouse") {
     Heatmap     = file.path(group_dir, "Heatmap"),
     GSEA        = file.path(group_dir, "GSEA")
   )
-  lapply(dirs, make_dir)
+  lapply(dirs[names(dirs) != "GSEA"], make_dir)
   dirs
 }
 

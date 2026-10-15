@@ -45,15 +45,15 @@ species:
   ref_secondary: "MouseRNAseqData"   
 
 sex_scoring:
-  run: true
-  regress: true
+  run: false
+  regress: false
   markers:
     female: ["Xist", "Tsix", "Kdm6a", "Eif2s3x", "Ddx3x", "Rps4x"]
     male: ["Eif2s3y", "Ddx3y", "Uty", "Kdm5d"]
 
 cell_cycle:
-  run: true
-  regress: true
+  run: false
+  regress: false
 
 # ── QC ─────────────────────────────────────────────────────────────────────────
 qc:
@@ -106,7 +106,7 @@ pseudobulk:
   min_replicates: 2          # required samples per condition for edgeR/GSEA
 
 gsea:
-  run: true                  # ranked Hallmark GSEA from edgeR pseudobulk statistics
+  run: false                 # ranked Hallmark GSEA from edgeR pseudobulk statistics
   collection: "H"            # MSigDB Hallmark
   min_size: 10
   max_size: 500
@@ -133,6 +133,7 @@ labeling:
 
 # ── Plot ───────────────────────────────────────────────────────────────────────
 plot:
+  feature_keep_scale: "all"  # FeaturePlot scales: "all" | "feature"
   umap_width_standard:  14
   umap_height_standard: 7
   umap_width_fine:      16
@@ -154,8 +155,8 @@ plot:
 
 # ── Escape Pathway Enrichment ──────────────────────────────────────────────────
 escape:
-  run:      false
-  method:   "AUCell"   # Options: "ssGSEA", "UCell", "AUCell", "GSVA" # WARNING ssGSEA is demanding
+  run:      true
+  methods:  ["UCell", "AUCell"] # Methods scored when escape$run is true
   library:  "H"        # per-cell scoring; "H" = Hallmark, "C5" = Gene Ontology, etc.
   min_size: 5
 

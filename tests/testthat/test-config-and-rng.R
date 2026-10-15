@@ -190,12 +190,13 @@ test_that("sample-level and Hallmark analysis config has deliberate defaults", {
   expect_false(loaded$pseudobulk$run)
   expect_true(loaded$pseudobulk$save_counts)
   expect_equal(loaded$pseudobulk$min_replicates, 2L)
-  expect_true(loaded$gsea$run)
+  expect_false(loaded$gsea$run)
   expect_identical(loaded$gsea$collection, "H")
   expect_true(loaded$gsea$plot_projection)
   expect_equal(loaded$gsea$projection_top_n, 10L)
-  expect_false(loaded$escape$run)
-  expect_identical(loaded$escape$methods, "ssGSEA")
+  expect_true(loaded$escape$run)
+  expect_identical(loaded$escape$methods, c("UCell", "AUCell"))
+  expect_identical(loaded$plot$feature_keep_scale, "all")
   expect_false(loaded$processing$run_tsne)
   expect_equal(loaded$processing$tsne_perplexity, 30)
 })
@@ -222,7 +223,60 @@ test_that("RANK override enables per-cell UCell and AUCell without GSEA", {
   expect_true(config$escape$run)
   expect_identical(config$escape$methods, c("UCell", "AUCell"))
   expect_identical(config$pipeline$species_target, "Mouse")
-  expect_false(base$escape$run)
+  expect_true(base$escape$run)
+  expect_false(base$sex_scoring$run)
+  expect_false(base$cell_cycle$run)
+  expect_identical(config$species$gene_removal_pattern,
+                   base$species$gene_removal_pattern)
+  expect_identical(config$species$mt_pattern, base$species$mt_pattern)
+  expect_identical(config$species$genes_to_remove, base$species$genes_to_remove)
+  expect_identical(config$species$ref_primary, base$species$ref_primary)
+  expect_identical(config$species$ref_secondary, base$species$ref_secondary)
+  expect_identical(config$sex_scoring$markers, base$sex_scoring$markers)
+  expect_identical(config$singler$labels, base$singler$labels)
+  expect_identical(config$processing, base$processing)
+  expect_identical(config$qc, base$qc)
+})
+
+test_that("all example YAML files parse and load with the matching species template", {
+  example_dir <- testthat::test_path("..", "..", "inst", "examples")
+  files <- list.files(example_dir, pattern = "\\.ya?ml$", full.names = TRUE)
+  expect_gt(length(files), 0L)
+  configs <- lapply(files, yaml::read_yaml)
+  names(configs) <- basename(files)
+
+  expected_species <- c(
+    "config_RANK.yaml" = "Mouse",
+    "config_GSE178272.yaml" = "Human",
+    "config_GSE112903.yaml" = "Mouse",
+    "config_E-MTAB-8445.yaml" = "Mouse",
+    "config_jens.yaml" = "Mouse",
+    "config_jens_WTonly.yaml" = "Mouse"
+  )
+  expect_setequal(names(configs), names(expected_species))
+  for (file in names(expected_species)) {
+    config <- configs[[file]]
+    expect_identical(config$pipeline$species_target, expected_species[[file]])
+    base_file <- if (identical(expected_species[[file]], "Mouse")) {
+      "config_template_mouse.yaml"
+    } else {
+      "config_template_human.yaml"
+    }
+    base_path <- testthat::test_path("..", "..", "inst", base_file)
+    override_path <- file.path(example_dir, file)
+    expect_no_error(SPARKS::load_pipeline_config(base_path, override_path))
+  }
+  expect_true(all(vapply(configs, is.list, logical(1))))
+})
+
+test_that("species templates use opt-in GSEA and retain plot scale defaults", {
+  for (template in c("config_template_mouse.yaml", "config_template_human.yaml")) {
+    config <- yaml::read_yaml(testthat::test_path("..", "..", "inst", template))
+    expect_false(config$gsea$run)
+    expect_true(config$escape$run)
+    expect_identical(config$escape$methods, c("UCell", "AUCell"))
+    expect_identical(config$plot$feature_keep_scale, "all")
+  }
 })
 
 test_that("escape scoring methods are validated", {

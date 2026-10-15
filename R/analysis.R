@@ -186,7 +186,7 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
                                        sample_col = "sample",
                                        min_replicates = 2L,
                                        run_pseudobulk_deg = FALSE,
-                                       run_gsea = TRUE,
+                                       run_gsea = FALSE,
                                        pathways = NULL,
                                        pathway_cache = NULL,
                                        pathway_loader = .hallmark_gene_sets,
@@ -196,11 +196,13 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
   if (!isTRUE(run_pseudobulk_deg) && !isTRUE(run_gsea)) return(invisible(NULL))
   write_gsea_status <- function(message_text, group = NULL) {
     if (!isTRUE(run_gsea)) return(invisible(NULL))
-    make_dir(gsea_dir)
+    # Keep skip diagnostics, but do not create a GSEA output directory unless
+    # an actual pathway table is written.
+    make_dir(dirname(gsea_dir))
     stem <- paste0("GSEA_Status_", file_prefix,
                    if (!is.null(group)) paste0("_", .safe_filename(group)),
                    "_by_", group_col, ".txt")
-    writeLines(message_text, file.path(gsea_dir, stem))
+    writeLines(message_text, file.path(dirname(gsea_dir), stem))
     invisible(NULL)
   }
   if (run_gsea && !requireNamespace("fgsea", quietly = TRUE)) {

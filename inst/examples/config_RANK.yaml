@@ -1,28 +1,157 @@
-# RANK dataset overrides for inst/config_template_mouse.yaml
+# RANK dataset config. Mouse-specific defaults are explicit so this file stays
+# aligned with the mouse template even when used without inheriting it.
 pipeline:
   data_dir: "./data/RANK"
   results_dir: "./results_RANK"
   sample_table: "./data/RANK/sample_table.tsv"
+  species_target: "Mouse"
+  independent_samples: false
+
+input:
+  format: "auto"
+  starsolo_feature: "Gene"
+  h5ad_raw_slot: "auto"
+  save_raw_matrix: true
+  raw_matrix_format: "mtx"
+
+# Explicit mouse profile so this override does not depend on later template edits.
+species:
+  gene_removal_pattern: "^(Rps|Rpl|Rrn|Rn|Hb|Gm).*|.*Rik$"
+  mt_pattern: "^mt-"
+  genes_to_remove:
+    - "Xist"
+    - "Tsix"
+    - "Kdm6a"
+    - "Eif2s3x"
+    - "Ddx3x"
+    - "Rps4x"
+    - "Prdx4"
+    - "Med14"
+    - "Zfx"
+    - "Ocrl"
+    - "Ddx39b"
+    - "Gpm6b"
+    - "Esr1"
+    - "Foxl2"
+    - "Wnt4"
+    - "Amhr2"
+    - "Eda2r"
+    - "Eif2s3y"
+    - "Ddx3y"
+    - "Uty"
+    - "Kdm5d"
+    - "Sox30"
+    - "Sox9"
+    - "Amh"
+    - "Insl3"
+  ref_primary: "ImmGenData"
+  ref_secondary: "MouseRNAseqData"
 
 sex_scoring:
   run: false
   regress: false
+  markers:
+    female: ["Xist", "Tsix", "Kdm6a", "Eif2s3x", "Ddx3x", "Rps4x"]
+    male: ["Eif2s3y", "Ddx3y", "Uty", "Kdm5d"]
 
 cell_cycle:
   run: false
   regress: false
+
+qc:
+  min_features: 200
+  max_features: 6000
+  max_counts: 30000
+  max_mt_percent: 10
+  min_cells: 3
+
+processing:
+  vars_to_regress: ["percent.mt"]
+  seed: 2861
+  pca_dims_from: 1
+  pca_dims_to: 20
+  npcs: 50
+  cluster_resolution: 0.5
+  n_elbow_dims: 50
+  cluster_col: "seurat_clusters"
+  condition_col: "condition"
+  reduction: "umap"
+  run_tsne: false
+  tsne_perplexity: 30
+  prep_sct_findmarkers: true
+
+deg:
+  run: true
+  logfc_threshold: 0.25
+  min_pct: 0.1
+  min_cells_per_group: 10
+  min_p_val_adj: 0.01
+  min_deg_display: 10
+  avg_expression_layers: ["data"]
+  table_sep: "\t"
+  table_quote: false
+  table_row_names: false
+
+pseudobulk:
+  run: false
+  save_counts: true
+  min_replicates: 2
 
 # RANK does not have a usable replicate design for ranked pseudobulk GSEA.
 # Per-cell pathway scores are descriptive and do not require biological
 # replicates; they are not tests of WT-vs-KO differences.
 gsea:
   run: false
+  collection: "H"
+  min_size: 10
+  max_size: 500
+  plot_projection: true
+  projection_top_n: 10
+
+singler:
+  unassigned_label: "Unassigned"
+  min_cells_per_group: 10
+  labels:
+    - name: "singleR_labels_main"
+      ref_field: "label.main"
+      is_fine: false
+    - name: "singleR_labels_fine"
+      ref_field: "label.fine"
+      is_fine: true
+
+labeling:
+  marker_positive_threshold: 0.1
+  min_subset_cells: 20
+  unassigned_suffix: "_Unassigned"
+
+plot:
+  feature_keep_scale: "all"
+  umap_width_standard: 14
+  umap_height_standard: 7
+  umap_width_fine: 16
+  umap_height_fine: 14
+  legend_nrow_fine: 8
+  deg_umap_width: 8
+  deg_umap_height: 7
+  deg_umap_point_size: 0.5
+  deg_umap_alpha: 0.6
+  deg_umap_label_size: 4
+  deg_umap_color_low: "lightgrey"
+  deg_color_main: "red"
+  elbow_width: 7
+  elbow_height: 5
+  qc_vln_width: 10
+  qc_vln_height: 5
+  qc_scatter_width: 12
+  qc_scatter_height: 5
 
 escape:
   run: true
   methods: ["UCell", "AUCell"]
   library: "H"
   min_size: 5
+
+groupings_main: ~
 
 genes:
   genes_to_plot:

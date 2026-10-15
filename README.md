@@ -80,10 +80,10 @@ sparks(
   override_config_path = "./inst/examples/config_RANK.yaml"
 )
 
-# For human (generic overrides; customize config.yaml for your dataset)
+# For the GSE178272 human dataset
 sparks(
   base_config_path     = "./inst/config_template_human.yaml",
-  override_config_path = "./inst/examples/config.yaml"
+  override_config_path = "./inst/examples/config_GSE178272.yaml"
 )
 ```
 

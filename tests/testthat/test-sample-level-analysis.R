@@ -114,11 +114,12 @@ test_that("GSEA writes a status explanation when replicate design is insufficien
     gsea_min_size = 1L, gsea_max_size = 1L
   )
 
-  status_file <- list.files(file.path(out, "GSEA"), pattern = "^GSEA_Status_",
+  status_file <- list.files(out, pattern = "^GSEA_Status_",
                             full.names = TRUE)
   expect_length(status_file, 1L)
+  expect_false(dir.exists(file.path(out, "GSEA")))
   expect_match(readLines(status_file), "at least 2 samples per condition")
-  snapshot <- SPARKS:::.snapshot_result_files(file.path(out, "GSEA"))
+  snapshot <- SPARKS:::.snapshot_result_files(out)
   expect_true(any(grepl("GSEA_Status_", rownames(snapshot), fixed = TRUE)))
 })
 
@@ -362,7 +363,9 @@ test_that("analysis output folders distinguish analysis types", {
   root <- tempfile("analysis-folders-")
   dirs <- SPARKS:::.make_analysis_dirs(root)
 
-  expect_true(all(vapply(dirs, dir.exists, logical(1))))
+  created_dirs <- dirs[names(dirs) != "GSEA"]
+  expect_true(all(vapply(created_dirs, dir.exists, logical(1))))
+  expect_false(dir.exists(dirs$GSEA))
   expect_false(identical(dirs$Correlation, dirs$DEG))
   expect_false(identical(dirs$Pseudobulk, dirs$DEG))
 })

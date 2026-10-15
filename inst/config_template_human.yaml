@@ -100,7 +100,7 @@ pseudobulk:
   min_replicates: 2          # required samples per condition for edgeR/GSEA
 
 gsea:
-  run: true                  # ranked Hallmark GSEA from edgeR pseudobulk statistics
+  run: false                 # ranked Hallmark GSEA from edgeR pseudobulk statistics
   collection: "H"            # MSigDB Hallmark
   min_size: 10
   max_size: 500
@@ -125,6 +125,7 @@ labeling:
 
 # ── Plot dimensions ────────────────────────────────────────────────────────────
 plot:
+  feature_keep_scale: "all"  # FeaturePlot scales: "all" | "feature"
   umap_width_standard:  14
   umap_height_standard: 7
   umap_width_fine:      16
@@ -132,8 +133,8 @@ plot:
 
 # ── Escape Pathway Enrichment ──────────────────────────────────────────────────
 escape:
-  run:      false
-  method:   "AUCell"   # Options: "ssGSEA", "UCell", "AUCell", "GSVA" # WARNING ssGSEA is demanding
+  run:      true
+  methods:  ["UCell", "AUCell"] # Methods scored when escape$run is true
   library:  "H"        # per-cell scoring; "H" = Hallmark, "C5" = Gene Ontology, etc.
   min_size: 5
 

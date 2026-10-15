@@ -464,7 +464,8 @@ run_analysis_unit <- function(seurat_obj, display_name, groupings, genes_list,
   generate_feature_plots(seurat_obj, genes_list, fp_dir, display_name,
                          reduction = cfg$processing$reduction,
                          assay = "RNA",
-                         split_by = cfg$processing$condition_col)
+                         split_by = cfg$processing$condition_col,
+                         keep_scale = cfg$plot$feature_keep_scale)
 }
 
 #' Run all analyses for one grouping column

@@ -180,7 +180,7 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
     stop("pseudobulk$min_replicates must be at least 2.", call. = FALSE)
   }
 
-  cfg$gsea$run <- cfg$gsea$run %||% TRUE
+  cfg$gsea$run <- cfg$gsea$run %||% FALSE
   cfg$gsea$collection <- cfg$gsea$collection %||% "H"
   cfg$gsea$min_size <- cfg$gsea$min_size %||% 10L
   cfg$gsea$max_size <- cfg$gsea$max_size %||% 500L
@@ -222,6 +222,14 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
   cfg$plot$deg_umap_label_size  <- cfg$plot$deg_umap_label_size  %||% 4
   cfg$plot$deg_umap_width       <- cfg$plot$deg_umap_width       %||% 8
   cfg$plot$deg_umap_height      <- cfg$plot$deg_umap_height      %||% 7
+  cfg$plot$feature_keep_scale   <- cfg$plot$feature_keep_scale   %||% "all"
+  if (!is.character(cfg$plot$feature_keep_scale) ||
+      length(cfg$plot$feature_keep_scale) != 1L ||
+      is.na(cfg$plot$feature_keep_scale) ||
+      !cfg$plot$feature_keep_scale %in% c("feature", "all")) {
+    stop("plot$feature_keep_scale must be either 'feature' or 'all'.",
+         call. = FALSE)
+  }
 
   cfg$singler$unassigned_label    <- cfg$singler$unassigned_label    %||% "Unassigned"
   cfg$singler$min_cells_per_group <- cfg$singler$min_cells_per_group %||% 10L
@@ -239,9 +247,9 @@ load_pipeline_config <- function(base_config_path, override_config_path = NULL) 
     character(0)
   }
 
-  cfg$escape$run      <- cfg$escape$run      %||% FALSE
-  cfg$escape$method   <- cfg$escape$method   %||% "ssGSEA"
-  cfg$escape$methods  <- cfg$escape$methods  %||% cfg$escape$method
+  cfg$escape$run      <- cfg$escape$run      %||% TRUE
+  cfg$escape$method   <- cfg$escape$method   %||% "UCell"
+  cfg$escape$methods  <- cfg$escape$methods  %||% c("UCell", "AUCell")
   valid_escape_methods <- c("ssGSEA", "UCell", "AUCell", "GSVA")
   if (!is.character(cfg$escape$methods) || length(cfg$escape$methods) == 0L ||
       anyNA(cfg$escape$methods) ||
