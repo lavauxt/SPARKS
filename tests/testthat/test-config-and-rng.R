@@ -175,6 +175,7 @@ test_that("results report covers current-run analyses and diagnostics", {
   expect_true(any(grepl("Escape_Heatmap_", report, fixed = TRUE)))
   expect_true(any(grepl("GSEA_Projection_", report, fixed = TRUE)))
   expect_true(any(grepl("GSEA_Status_", report, fixed = TRUE)))
+  expect_true(any(grepl("Escape_Scores_", report, fixed = TRUE)))
 })
 
 test_that("sample-level and Hallmark analysis config has deliberate defaults", {

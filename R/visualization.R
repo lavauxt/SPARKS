@@ -6,6 +6,61 @@
 #' @param reduction Character
 #' @return NULL
 #' @export
+.make_feature_plot <- function(seurat_obj, gene, reduction, assay, split_by,
+                               keep_scale) {
+  expression <- SeuratObject::LayerData(
+    seurat_obj, assay = assay, layer = "data"
+  )[gene, ]
+  limits <- range(as.numeric(expression), finite = TRUE)
+  if (length(limits) != 2L || any(!is.finite(limits))) limits <- c(0, 1)
+  if (limits[1L] == limits[2L]) {
+    limits <- limits + c(-0.5, 0.5)
+  }
+
+  panel_cells <- if (is.null(split_by)) {
+    list(All = colnames(seurat_obj))
+  } else {
+    panel_values <- seurat_obj@meta.data[[split_by]]
+    panel_levels <- if (is.factor(panel_values)) {
+      levels(panel_values)
+    } else {
+      unique(as.character(panel_values))
+    }
+    panel_levels <- panel_levels[panel_levels %in% as.character(panel_values)]
+    cells_by_panel <- split(
+      rownames(seurat_obj@meta.data)[!is.na(seurat_obj@meta.data[[split_by]])],
+      factor(as.character(panel_values[!is.na(panel_values)]),
+             levels = panel_levels),
+      drop = TRUE
+    )
+    cells_by_panel[panel_levels[panel_levels %in% names(cells_by_panel)]]
+  }
+
+  plots <- lapply(names(panel_cells), function(panel) {
+    panel_obj <- if (is.null(split_by)) seurat_obj else subset(
+      seurat_obj, cells = panel_cells[[panel]]
+    )
+    Seurat::FeaturePlot(
+      panel_obj,
+      features = gene,
+      reduction = reduction,
+      assay = assay,
+      pt.size = 1,
+      cols = c("lightgrey", "blue"),
+      combine = TRUE
+    ) + ggplot2::scale_color_gradientn(
+      colors = c("lightgrey", "blue"),
+      limits = limits,
+      oob = scales::squish,
+      guide = "colourbar"
+    ) + ggplot2::labs(title = if (is.null(split_by)) NULL else panel)
+  })
+
+  if (length(plots) == 1L) return(plots[[1L]])
+  patchwork::wrap_plots(plots, nrow = 1L, guides = "collect") &
+    ggplot2::theme(legend.position = "right")
+}
+
 generate_feature_plots <- function(seurat_obj, genes, out_dir, prefix,
                                    reduction = "umap", assay = "RNA",
                                    split_by = "condition",
@@ -43,16 +98,8 @@ generate_feature_plots <- function(seurat_obj, genes, out_dir, prefix,
 
   for (gene in genes) {
     p <- safe_run({
-      Seurat::FeaturePlot(
-        seurat_obj,
-        features = gene,
-        reduction = reduction,
-        split.by = split_by,
-        assay = assay,
-        pt.size = 1,
-        keep.scale = keep_scale,
-        combine = TRUE
-      ) + patchwork::plot_annotation(
+      .make_feature_plot(seurat_obj, gene, reduction, assay, split_by,
+                         keep_scale) + patchwork::plot_annotation(
         title = paste("Expression of", gene, "in", prefix)
       )
     }, label = paste0("FeaturePlot ", gene))

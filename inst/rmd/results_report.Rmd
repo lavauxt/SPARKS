@@ -666,6 +666,24 @@ if (length(escape_plot_files)) {
     print(knitr::include_graphics(f))
   }
 }
+
+escape_score_files <- .current_files(list.files(
+  out_dir, pattern = "^Escape_Scores_.*\\.tsv$",
+  recursive = TRUE, full.names = TRUE
+))
+if (length(escape_score_files)) {
+  for (f in escape_score_files) {
+    scores <- tryCatch(utils::read.delim(f, check.names = FALSE),
+                       error = function(e) NULL)
+    cat("\n#### ", basename(f), "\n\n", sep = "")
+    if (is.null(scores) || !nrow(scores)) {
+      cat("> No pathway score summary available.\n\n")
+    } else {
+      print(.nice_dt(scores, caption = basename(f), page_len = 20))
+      cat("\n")
+    }
+  }
+}
 ```
 
 ---

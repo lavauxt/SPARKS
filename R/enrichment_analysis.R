@@ -132,20 +132,49 @@ generate_escape_plots <- function(seurat_obj, method = "ssGSEA", group_col,
   make_dir(escape_dir)
   p <- safe_run(
     escape::heatmapEnrichment(seurat_obj, group.by = group_col,
-                              assay = assay_name, scale = TRUE,
+                              assay = assay_name, scale = FALSE,
                               cluster.rows = nrow(score_matrix) > 1L,
                               cluster.columns = n_groups > 1L) +
       ggplot2::ggtitle(paste0("Enrichment (", method, ") | ", group_col)),
     label = paste0("escape::heatmapEnrichment ", group_col)
   )
+  plot_path <- NULL
   if (!is.null(p)) {
     plot_path <- file.path(
-      escape_dir, paste0("Escape_Heatmap_", prefix, "_", group_col, ".png")
+      escape_dir, paste0("Escape_Heatmap_", method, "_", prefix, "_",
+                         group_col, ".png")
     )
     save_png(p, plot_path, width = 10, height = 8)
-    return(invisible(plot_path))
   }
-  invisible(NULL)
+
+  group_values <- as.character(seurat_obj@meta.data[[group_col]])
+  group_levels <- unique(group_values[!is.na(group_values)])
+  if (length(group_levels)) {
+    score_means <- vapply(group_levels, function(group) {
+      cells <- rownames(seurat_obj@meta.data)[
+        !is.na(group_values) & group_values == group
+      ]
+      Matrix::rowMeans(score_matrix[, cells, drop = FALSE], na.rm = TRUE)
+    }, numeric(nrow(score_matrix)))
+    if (is.null(dim(score_means))) {
+      score_means <- matrix(score_means, ncol = 1L,
+                            dimnames = list(rownames(score_matrix), group_levels))
+    }
+    score_table <- data.frame(
+      method = method,
+      pathway = rep(rownames(score_means), each = length(group_levels)),
+      group = rep(group_levels, times = nrow(score_means)),
+      mean_score = as.vector(t(score_means)),
+      stringsAsFactors = FALSE
+    )
+    utils::write.table(
+      score_table,
+      file = file.path(escape_dir, paste0("Escape_Scores_", method, "_",
+                                          prefix, "_", group_col, ".tsv")),
+      sep = "\t", quote = FALSE, row.names = FALSE
+    )
+  }
+  invisible(plot_path)
 }
 
 .hallmark_gene_sets <- function(species = "Mouse", collection = "H") {

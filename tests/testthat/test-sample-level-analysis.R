@@ -347,7 +347,8 @@ test_that("FeaturePlots and violins use RNA genes and split by condition", {
 
   SPARKS::generate_feature_plots(
     object, genes = c("rna-only", "sct-absent"), out_dir = feature_dir,
-    prefix = "Main", reduction = "umap", assay = "RNA", split_by = "condition"
+    prefix = "Main", reduction = "umap", assay = "RNA", split_by = "condition",
+    keep_scale = "all"
   )
   SPARKS::generate_violin_plots(
     object, genes = "rna-only", out_dir = violin_dir, prefix = "Main",
@@ -357,6 +358,29 @@ test_that("FeaturePlots and violins use RNA genes and split by condition", {
   expect_true(file.exists(file.path(feature_dir, "Main_FeaturePlot_rna-only.png")))
   expect_false(file.exists(file.path(feature_dir, "Main_FeaturePlot_sct-absent.png")))
   expect_true(file.exists(file.path(violin_dir, "VlnPlot_Main_rna-only.png")))
+})
+
+test_that("split FeaturePlots retain a shared visible colour scale", {
+  counts <- matrix(
+    c(1:12, 12:1), nrow = 2,
+    dimnames = list(c("gene-a", "gene-b"), paste0("cell", seq_len(12)))
+  )
+  object <- suppressWarnings(Seurat::CreateSeuratObject(counts = counts))
+  object <- Seurat::NormalizeData(object, assay = "RNA", verbose = FALSE)
+  object$condition <- factor(rep(c("WT", "KO"), each = 6), levels = c("WT", "KO"))
+  emb <- matrix(seq_len(24), ncol = 2,
+                dimnames = list(colnames(object), c("UMAP_1", "UMAP_2")))
+  object[["umap"]] <- SeuratObject::CreateDimReducObject(
+    embeddings = emb, key = "UMAP_", assay = "RNA"
+  )
+
+  plot <- SPARKS:::.make_feature_plot(
+    object, "gene-a", "umap", "RNA", "condition", "all"
+  )
+  expect_s3_class(plot, "patchwork")
+  expect_s3_class(plot$patches$plots[[1]]$scales$get_scales("colour"),
+                  "ScaleContinuous")
+  expect_length(plot$patches$plots, 2L)
 })
 
 test_that("analysis output folders distinguish analysis types", {
@@ -395,6 +419,9 @@ test_that("escape heatmaps handle a single pathway and one grouping level", {
     prefix = "test"
   )
   expect_true(file.exists(path))
+  expect_true(file.exists(file.path(
+    out, "Escape", "Escape_Scores_UCell_test_one_group.tsv"
+  )))
 })
 
 test_that("Hallmark escape scoring filters to detected genes for UCell and AUCell", {
