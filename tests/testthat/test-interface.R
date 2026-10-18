@@ -169,6 +169,33 @@ test_that("run monitor formats elapsed time and target progress", {
   expect_identical(SPARKS:::.format_run_elapsed(0, 3661), "01:01:01")
 })
 
+test_that("completed background process polling supplies a zero timeout", {
+  calls <- list()
+  process <- list(
+    poll_io = function(timeout) {
+      calls$timeout <<- timeout
+      invisible(NULL)
+    },
+    get_exit_status = function() 0L
+  )
+
+  expect_identical(SPARKS:::.poll_completed_run(process), 0L)
+  expect_identical(calls$timeout, 0)
+})
+
+test_that("run log views can start at the current log offsets", {
+  log <- tempfile("sparks-log-offset-")
+  on.exit(unlink(log), add = TRUE)
+  writeLines(c("previous run line 1", "previous run line 2"), log)
+  offsets <- SPARKS:::.capture_log_offsets(log)
+  cat("current run line\n", file = log, append = TRUE)
+
+  expect_identical(unname(offsets), 2L)
+  expect_identical(SPARKS:::.read_log_lines_since(log, offsets),
+                   "current run line")
+  expect_length(SPARKS:::.read_log_lines_since(log, integer()), 3L)
+})
+
 test_that("run log appends timestamped status events", {
   log <- tempfile()
   on.exit(unlink(log), add = TRUE)
@@ -176,7 +203,20 @@ test_that("run log appends timestamped status events", {
   contents <- readLines(log)
   expect_length(contents, 1L)
   expect_match(contents, "STARTING unit test")
+  expect_match(contents, " STARTING unit test$")
   expect_match(contents, "[0-9]{4}-[0-9]{2}-[0-9]{2}")
+})
+
+test_that("targets runs cannot succeed without recording requested targets", {
+  metadata <- data.frame(name = ".Random.seed")
+  expect_error(
+    SPARKS:::.assert_targets_recorded(metadata, c("sample_00001", "group_g1")),
+    "without recording expected target"
+  )
+  expect_silent(SPARKS:::.assert_targets_recorded(
+    data.frame(name = c("sample_00001", "group_g1")),
+    c("sample_00001", "group_g1")
+  ))
 })
 
 test_that("UI configuration validation confirms samples and target graph", {

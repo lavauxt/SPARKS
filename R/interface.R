@@ -49,9 +49,9 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
   script <- .targets_plan_script(base_config_path, override_config_path,
                                  results_dir, package_path)
   writeLines(script, script_path, useBytes = TRUE)
+  valid_names <- .targets_plan_names(base_config_path, override_config_path,
+                                     results_dir)
   if (!is.null(target_names)) {
-    valid_names <- .targets_plan_names(base_config_path, override_config_path,
-                                       results_dir)
     .validate_targets_selection(target_names, valid_names)
   }
 
@@ -66,6 +66,10 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
   targets::tar_make(script = script_path,
                     store = file.path(targets_dir, "store"),
                     names = target_names)
+  metadata <- targets::tar_meta(fields = name,
+                                store = file.path(targets_dir, "store"))
+  expected_names <- if (is.null(target_names)) valid_names else target_names
+  .assert_targets_recorded(metadata, expected_names)
   invisible(file.path(targets_dir, "store"))
 }
 
@@ -160,6 +164,18 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
   line <- paste(format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), event, detail)
   cat(line, "\n", file = path, append = TRUE, sep = "")
   invisible(line)
+}
+
+.assert_targets_recorded <- function(metadata, expected_names) {
+  recorded <- if (is.data.frame(metadata) && "name" %in% names(metadata)) {
+    as.character(metadata$name)
+  } else character()
+  missing <- setdiff(expected_names, recorded)
+  if (length(missing)) {
+    stop("Targets workflow returned without recording expected target(s): ",
+         paste(missing, collapse = ", "), call. = FALSE)
+  }
+  invisible(recorded)
 }
 
 .validate_ui_configuration <- function(base_config_path,
@@ -262,6 +278,31 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
   summary <- tryCatch(targets::tar_progress_summary(store = store),
                       error = function(e) NULL)
   .format_target_progress(summary)
+}
+
+.poll_completed_run <- function(process) {
+  process$poll_io(timeout = 0)
+  process$get_exit_status()
+}
+
+.capture_log_offsets <- function(paths) {
+  paths <- unique(paths[!is.na(paths) & nzchar(paths)])
+  stats::setNames(vapply(paths, function(path) {
+    if (file.exists(path)) length(readLines(path, warn = FALSE)) else 0L
+  }, integer(1)), paths)
+}
+
+.read_log_lines_since <- function(paths, offsets) {
+  paths <- unique(paths[!is.na(paths) & nzchar(paths)])
+  unlist(lapply(paths, function(path) {
+    if (!file.exists(path)) return(character())
+    lines <- readLines(path, warn = FALSE)
+    offset <- if (!is.null(offsets) && path %in% names(offsets)) {
+      offsets[[path]]
+    } else 0L
+    if (length(lines) <= offset) character() else
+      lines[seq.int(offset + 1L, length(lines))]
+  }), use.names = FALSE)
 }
 
 .explorer_features <- function(object, max_genes = 1000L) {
@@ -1148,6 +1189,7 @@ sparks_app <- function(...) {
   server <- function(input, output, session) {
     state <- shiny::reactiveValues(process = NULL, report = "Ready",
                                    started_at = NULL, log_path = NULL,
+                                   log_offsets = integer(), logs_active = FALSE,
                                    validated = FALSE, last_heartbeat = NULL)
     shiny::observeEvent(input$run, {
       if (!is.null(state$process) && state$process$is_alive()) {
@@ -1156,6 +1198,8 @@ sparks_app <- function(...) {
       }
       state$report <- "VALIDATING — checking config, sample table and target selection."
       state$validated <- FALSE
+      state$logs_active <- FALSE
+      state$log_offsets <- integer()
       state$started_at <- NULL
       if (is.null(input$results_dir) || !nzchar(input$results_dir)) {
         state$report <- "VALIDATION FAILED: select a results directory."
@@ -1163,6 +1207,9 @@ sparks_app <- function(...) {
       }
       dir.create(input$results_dir, recursive = TRUE, showWarnings = FALSE)
       state$log_path <- file.path(input$results_dir, "shiny_run.log")
+      process_log <- file.path(input$results_dir, "shiny_process.log")
+      state$log_offsets <- .capture_log_offsets(c(state$log_path, process_log))
+      state$logs_active <- TRUE
       .log_run_event(state$log_path, "VALIDATING",
                      "Checking configuration and sample table")
       tryCatch({
@@ -1229,8 +1276,9 @@ sparks_app <- function(...) {
                    library_paths) {
             .libPaths(unique(c(library_paths, .libPaths())))
             log <- function(event, detail = "") {
-              cat(format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), event,
-                  detail, "\n", file = log_path, append = TRUE, sep = "")
+              line <- paste(format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"),
+                            event, detail)
+              cat(line, "\n", file = log_path, append = TRUE, sep = "")
             }
             log("RUNNING", "Starting targets workflow")
             tryCatch({
@@ -1304,8 +1352,7 @@ sparks_app <- function(...) {
                                 .format_run_elapsed(state$started_at),
                                 "elapsed; background process is alive.")
         } else {
-          state$process$poll_io()
-          code <- state$process$get_exit_status()
+          code <- .poll_completed_run(state$process)
           state$report <- if (isTRUE(code == 0L)) {
             paste("SUCCEEDED — completed in",
                   .format_run_elapsed(state$started_at))
@@ -1342,10 +1389,12 @@ sparks_app <- function(...) {
       .targets_run_progress(store)
     })
     output$validation <- shiny::renderText({
+      if (!isTRUE(state$logs_active)) {
+        return("Run validation and logs will appear here after starting a run.")
+      }
       path <- state$log_path %||% file.path(input$results_dir, "shiny_run.log")
       process_log <- file.path(input$results_dir, "shiny_process.log")
-      lines <- c(if (file.exists(path)) readLines(path, warn = FALSE),
-                 if (file.exists(process_log)) readLines(process_log, warn = FALSE))
+      lines <- .read_log_lines_since(c(path, process_log), state$log_offsets)
       statuses <- tryCatch({
         store <- file.path(input$results_dir, "_targets", "store")
         if (requireNamespace("targets", quietly = TRUE) &&
@@ -1360,9 +1409,9 @@ sparks_app <- function(...) {
     })
     output$run_log <- shiny::renderText({
       shiny::invalidateLater(1000, session)
+      if (!isTRUE(state$logs_active)) return("No run log for this app session yet.")
       paths <- c(state$log_path, file.path(input$results_dir, "shiny_process.log"))
-      paths <- paths[!is.na(paths) & file.exists(paths)]
-      lines <- unlist(lapply(paths, readLines, warn = FALSE), use.names = FALSE)
+      lines <- .read_log_lines_since(paths, state$log_offsets)
       paste(tail(lines, 60), collapse = "\n")
     })
     catalog <- shiny::eventReactive(input$refresh, {
