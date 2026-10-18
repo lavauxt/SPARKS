@@ -714,28 +714,7 @@ if (length(escape_score_files)) {
 
 ---
 
-## Pipeline diagnostics
-
-```{r diagnostics, results='asis'}
-if (!is.null(params$log_path) && file.exists(params$log_path)) {
-  log_lines <- readLines(params$log_path, warn = FALSE)
-  diagnostics <- grep("\\[(WARNING|ERROR)\\]", log_lines, value = TRUE)
-  skips <- grep("\\[SKIP", log_lines, value = TRUE)
-  if (length(diagnostics) || length(skips)) {
-    diagnostic_df <- data.frame(
-      Type = c(rep("Warning/error", length(diagnostics)),
-               rep("Skipped/unavailable", length(skips))),
-      Message = c(diagnostics, skips),
-      stringsAsFactors = FALSE
-    )
-    print(.nice_dt(diagnostic_df, caption = "Pipeline diagnostics", page_len = 20))
-  } else {
-    cat("> No warnings, errors, or skipped analyses were logged.\n")
-  }
-} else {
-  cat("> Pipeline log is not available.\n")
-}
-```
+<!-- SPARKS_DOWNLOADS -->
 
 ## 9 · Session Info {.tabset}
 
@@ -759,3 +738,26 @@ cat("Date:     ", format(Sys.time()),         "\n")
 ```
 
 </details>
+
+## Pipeline diagnostics
+
+```{r diagnostics, results='asis'}
+if (!is.null(params$log_path) && file.exists(params$log_path)) {
+  log_lines <- readLines(params$log_path, warn = FALSE)
+  diagnostics <- grep("\\[(WARNING|ERROR)\\]", log_lines, value = TRUE)
+  skips <- grep("\\[SKIP", log_lines, value = TRUE)
+  if (length(diagnostics) || length(skips)) {
+    diagnostic_df <- data.frame(
+      Type = c(rep("Warning/error", length(diagnostics)),
+               rep("Skipped/unavailable", length(skips))),
+      Message = c(diagnostics, skips),
+      stringsAsFactors = FALSE
+    )
+    print(.nice_dt(diagnostic_df, caption = "Pipeline diagnostics", page_len = 20))
+  } else {
+    cat("> No warnings, errors, or skipped analyses were logged.\n")
+  }
+} else {
+  cat("> Pipeline log is not available.\n")
+}
+```

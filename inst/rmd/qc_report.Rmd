@@ -264,6 +264,14 @@ if (!"seurat_clusters" %in% colnames(obj[[]])) {
 }
 ```
 
+<!-- SPARKS_DOWNLOADS -->
+
+## Session info
+
+```{r session}
+sessionInfo()
+```
+
 ## Pipeline diagnostics
 
 ```{r diagnostics, results='asis'}
@@ -285,10 +293,4 @@ if (!is.null(params$log_path) && file.exists(params$log_path)) {
 } else {
   cat("Pipeline log is not available.")
 }
-```
-
-## Session info
-
-```{r session}
-sessionInfo()
 ```

@@ -77,6 +77,28 @@ test_that("report download section exposes only valid local files", {
                                fixed = TRUE)[[1L]]), 1L)
 })
 
+test_that("report downloads replace the session-info marker in place", {
+  skip_if_not_installed("htmltools")
+  root <- tempfile("report-download-position-")
+  dir.create(root)
+  report <- file.path(root, "report.html")
+  result <- file.path(root, "table.tsv")
+  writeLines(paste0("<html><body><h1>Report</h1>",
+                    "<!-- SPARKS_DOWNLOADS -->",
+                    "<h2>Session info</h2><h2>Pipeline diagnostics</h2>",
+                    "</body></html>"), report)
+  writeLines("a\tb", result)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+
+  SPARKS:::.append_report_download_section(report, result, "Downloads")
+  html <- paste(readLines(report, warn = FALSE), collapse = "\n")
+  expect_lt(regexpr("id=\"sparks-downloads\"", html, fixed = TRUE)[[1L]],
+            regexpr("Session info", html, fixed = TRUE)[[1L]])
+  expect_gt(regexpr("Pipeline diagnostics", html, fixed = TRUE)[[1L]],
+            regexpr("Session info", html, fixed = TRUE)[[1L]])
+  expect_false(grepl("SPARKS_DOWNLOADS", html, fixed = TRUE))
+})
+
 test_that("current-run file tracking includes escape results", {
   root <- tempfile("escape-report-files-")
   dir.create(root)

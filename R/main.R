@@ -510,6 +510,10 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
   is_fine       <- length(singler_entry) > 0L && isTRUE(singler_entry[[1L]]$is_fine)
   umap_w        <- if (is_fine) cfg$plot$umap_width_fine  else cfg$plot$umap_width_standard
   umap_h        <- if (is_fine) cfg$plot$umap_height_fine else cfg$plot$umap_height_standard
+  umap_levels   <- if (is_fine) {
+    levels(droplevels(factor(seurat_obj@meta.data[[group_col]])))
+  } else NULL
+  umap_colors   <- if (is_fine) scales::hue_pal()(length(umap_levels)) else NULL
 
   do_deg <- isTRUE(cfg$deg$run %||% TRUE)
   do_cell_deg <- do_deg && !isTRUE(skip_cell_deg)
@@ -524,7 +528,8 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
     reduction = cfg$processing$reduction,
     group.by  = group_col,
     label     = TRUE, repel = TRUE,
-    split.by  = cfg$processing$condition_col) +
+    split.by  = cfg$processing$condition_col,
+    cols      = umap_colors) +
     ggplot2::ggtitle(paste0(file_prefix, " | ", group_col, " | ",
                              paste(cond_vals, collapse = if (do_cell_deg) " vs " else " / "),
                              " | ", suffix))
@@ -537,9 +542,54 @@ run_grouping_analysis <- function(seurat_obj, group_col, file_prefix,
         override.aes = list(size = 3)
       ))
 
-  save_png(p_umap,
-    file.path(dirs$UMAP, paste0("UMAP_", file_prefix, "_", group_col, ".png")),
-    width = umap_w, height = umap_h)
+  if (is_fine) {
+    p_umap_without_labels <- Seurat::DimPlot(seurat_obj,
+      reduction = cfg$processing$reduction,
+      group.by  = group_col,
+      label     = FALSE,
+      split.by  = cfg$processing$condition_col,
+      cols      = umap_colors) +
+      ggplot2::ggtitle(paste0(file_prefix, " | ", group_col, " | ",
+                               paste(cond_vals, collapse = if (do_cell_deg) " vs " else " / "),
+                               " | ", suffix))
+    label_key <- data.frame(
+      label = umap_levels,
+      column = rep(seq_len(2L), length.out = length(umap_levels)),
+      row = rev(seq_len(length(umap_levels)))
+    )
+    label_key$row <- ave(label_key$row, label_key$column, FUN = seq_along)
+    key_plot <- ggplot2::ggplot(label_key, ggplot2::aes(
+      x = column, y = row, color = label
+    )) +
+      ggplot2::geom_point(size = 2.5) +
+      ggplot2::geom_text(ggplot2::aes(label = label), hjust = -0.2,
+                         size = 3, show.legend = FALSE) +
+      ggplot2::scale_color_manual(values = stats::setNames(umap_colors, umap_levels)) +
+      ggplot2::scale_x_continuous(limits = c(0.8, 2.8), breaks = NULL) +
+      ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0.05, 0.05))) +
+      ggplot2::labs(title = paste(group_col, "label key")) +
+      ggplot2::theme_void() +
+      ggplot2::theme(legend.position = "none", plot.title = ggplot2::element_text(hjust = 0.5))
+
+    save_png(p_umap,
+      file.path(dirs$UMAP, paste0("UMAP_", file_prefix, "_", group_col, ".png")),
+      width = umap_w, height = umap_h)
+
+    grDevices::pdf(file.path(dirs$UMAP,
+      paste0("UMAP_", file_prefix, "_", group_col, ".pdf")),
+      width = umap_w, height = umap_h, onefile = TRUE)
+    device_id <- grDevices::dev.cur()
+    on.exit({
+      if (device_id %in% grDevices::dev.list()) grDevices::dev.off(device_id)
+    }, add = TRUE)
+    print(p_umap_without_labels)
+    print(key_plot)
+    grDevices::dev.off(device_id)
+  } else {
+    save_png(p_umap,
+      file.path(dirs$UMAP, paste0("UMAP_", file_prefix, "_", group_col, ".png")),
+      width = umap_w, height = umap_h)
+  }
 
   generate_violin_plots(seurat_obj, genes_list, dirs$VlnPlot, file_prefix,
                          group_by_col = group_col,

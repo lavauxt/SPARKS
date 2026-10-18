@@ -256,8 +256,13 @@ safe_run <- function(expr, label = "Task", fallback = NULL) {
   if (!grepl("(?i)<body(?:\\s[^>]*)?>", html, perl = TRUE)) {
     stop("report_path does not contain an opening <body> tag.", call. = FALSE)
   }
-  html <- sub("(?i)(<body(?:\\s[^>]*)?>)", paste0("\\1\n", section),
-              html, perl = TRUE)
+  marker <- "<!-- SPARKS_DOWNLOADS -->"
+  if (grepl(marker, html, fixed = TRUE)) {
+    html <- sub(marker, section, html, fixed = TRUE)
+  } else {
+    html <- sub("(?i)(<body(?:\\s[^>]*)?>)", paste0("\\1\n", section),
+                html, perl = TRUE)
+  }
   writeLines(html, report_path, useBytes = TRUE)
   invisible(report_path)
 }
