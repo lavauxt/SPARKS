@@ -1,11 +1,12 @@
-#' Save a FeaturePlot for each gene in the list
+#' Save a FeaturePlot for one gene in the list
 #' @param seurat_obj Seurat object
-#' @param genes Character vector
-#' @param out_dir Character
-#' @param prefix Character
+#' @param gene Character gene name
 #' @param reduction Character
+#' @param assay Character assay name
+#' @param split_by Optional metadata column for faceting
+#' @param keep_scale Scale behavior
 #' @return NULL
-#' @export
+#' @keywords internal
 .make_feature_plot <- function(seurat_obj, gene, reduction, assay, split_by,
                                keep_scale) {
   expression <- SeuratObject::LayerData(
@@ -61,6 +62,18 @@
     ggplot2::theme(legend.position = "right")
 }
 
+#' Generate FeaturePlots for a set of genes
+#'
+#' @param seurat_obj A Seurat object.
+#' @param genes Character vector of gene names.
+#' @param out_dir Output directory.
+#' @param prefix Filename prefix.
+#' @param reduction Embedding reduction to use.
+#' @param assay Assay containing expression data.
+#' @param split_by Optional metadata column for splitting plots.
+#' @param keep_scale Whether to use a shared or per-feature scale.
+#' @return Invisibly, `NULL`.
+#' @export
 generate_feature_plots <- function(seurat_obj, genes, out_dir, prefix,
                                    reduction = "umap", assay = "RNA",
                                    split_by = "condition",
@@ -650,6 +663,13 @@ generate_subcluster_heatmaps <- function(seurat_obj, genes, out_dir, prefix) {
   )
 }
 
+.signature_dotplot_dimensions <- function(n_genes, n_combo) {
+  c(
+    width = min(48, max(14, n_genes * 0.7 + 8)),
+    height = min(48, max(3, n_combo * 0.35 + 2))
+  )
+}
+
 #' Generate Gene Signature Panel (per-cell heatmap + aggregated heatmap + DotPlot)
 #'
 #' @param seurat_obj Seurat object (DefaultAssay should already be set, e.g. "SCT")
@@ -746,7 +766,7 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
   }, label = paste0("DoHeatmap (", signature_name, ")"))
 
   if (!is.null(p_cell)) {
-    calc_width <- min(50, max(10, n_combo * 0.35 + 4))
+    calc_width <- min(48, max(10, n_combo * 0.35 + 4))
     save_png(p_cell,
       file.path(out_dir, paste0(file_tag, "_Heatmap_PerCell.png")),
       width = calc_width, height = max(6, length(genes) * 0.5 + 2))
@@ -807,7 +827,7 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
   }, label = paste0("Aggregated heatmap (", signature_name, ")"))
 
   if (!is.null(agg_plot)) {
-    calc_width <- min(50, max(5, n_combo * 0.55 + 2))
+    calc_width <- min(48, max(5, n_combo * 0.55 + 2))
     save_png(agg_plot,
       file.path(out_dir, paste0(file_tag, "_Heatmap_Aggregated.png")),
       width = calc_width, height = max(4, length(genes) * 0.4))
@@ -860,10 +880,13 @@ generate_gene_signature_plots <- function(seurat_obj, genes, out_dir, prefix,
   }, label = paste0("DotPlot (", signature_name, ")"))
 
   if (!is.null(p_dot)) {
+    # ggplot2 rejects raster dimensions above 50 inches. Fine-grained labels can
+    # create enough group-condition combinations to exceed that limit.
+    dot_dimensions <- .signature_dotplot_dimensions(length(genes), n_combo)
     save_png(p_dot,
       file.path(out_dir, paste0(file_tag, "_DotPlot.png")),
-      width  = max(14, length(genes) * 0.7 + 8),  # extra space for legends
-      height = max(3, n_combo * 0.35 + 2))
+      width = dot_dimensions[["width"]],
+      height = dot_dimensions[["height"]])
   }
 
   invisible(NULL)

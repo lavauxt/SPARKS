@@ -57,6 +57,50 @@ devtools::install_github("lavauxt/SPARKS", dependencies = TRUE)
 
 ## Quick Start
 
+### Interactive interface and resumable runs
+
+Install the optional interface/workflow packages (`shiny`, `bslib`, `DT`,
+`targets`, `callr`, `htmltools`, and `base64enc`) and launch the app with:
+
+```r
+SPARKS::sparks_app()
+```
+
+The app accepts a base configuration, optional override YAML and sample table,
+validates settings with the package's regular validators, launches the targets
+workflow in a background R process, and provides a searchable results catalog
+with per-file downloads. The run page displays validation/launch state, a
+timestamped log, elapsed time, and live target progress. Guided controls cover
+common settings, while the YAML editor supports the full configuration. After
+validation, choose specific targets or leave the selection empty to run the
+complete workflow. Dependencies of selected targets run as needed.
+`SPARKS::run_sparks_targets()` accepts the same optional `target_names` argument.
+Targets are stored under
+`<results_dir>/_targets/`; completed targets are reused when their tracked
+configuration and input files are unchanged. A store lock prevents concurrent
+SPARKS runs from writing to the same results directory.
+
+The **Overview** page summarizes output files by group/type and, for saved
+merged Seurat objects, provides a UMAP explorer colored by metadata or selected
+gene expression. Install optional package `plotly` for hover and lasso selection;
+metadata-selected cells can be downloaded as TSV. This is a lightweight
+exploration view, not a full replacement for 10x Genomics Loupe Browser.
+
+The workflow also creates `SPARKS_all_results.html`, a portable, tabbed HTML
+catalog with embedded result files, plot previews, searchable table previews,
+and individual original-file downloads. Large result sets may make this HTML
+document large; large serialized objects are downloadable but are not previewed.
+The Shiny results browser also supports exporting tabular results as CSV or TSV.
+
+```r
+SPARKS::run_sparks_targets(
+  base_config_path = "./inst/config_template_mouse.yaml",
+  override_config_path = "./inst/examples/config_RANK.yaml"
+)
+```
+
+The existing sequential `sparks()` API remains available and is unchanged.
+
 ### 1. Prepare your Sample Table
 Create a `sample_table.tsv` defining your data folders and experimental conditions:
 
@@ -69,6 +113,10 @@ Create a `sample_table.tsv` defining your data folders and experimental conditio
 Copy the provided mouse template and modify it for your study. You can override specific parameters (e.g., QC thresholds, resolution) in a separate YAML file.
 
 ### 3. Run the Pipeline
+
+The package `sparks()` runner continues to work as before. To launch a
+resumable target-based run or the Shiny UI, see [Interactive interface and
+resumable runs](#interactive-interface-and-resumable-runs).
 
 ```{r run-sparks, eval=FALSE}
 library(SPARKS)

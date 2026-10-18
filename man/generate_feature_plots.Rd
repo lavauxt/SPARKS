@@ -2,7 +2,7 @@
 % Please edit documentation in R/visualization.R
 \name{generate_feature_plots}
 \alias{generate_feature_plots}
-\title{Save a FeaturePlot for each gene in the list}
+\title{Generate FeaturePlots for a set of genes}
 \usage{
 generate_feature_plots(
   seurat_obj,
@@ -16,16 +16,25 @@ generate_feature_plots(
 )
 }
 \arguments{
-\item{seurat_obj}{Seurat object}
+\item{seurat_obj}{A Seurat object.}
 
-\item{genes}{Character vector}
+\item{genes}{Character vector of gene names.}
 
-\item{out_dir}{Character}
+\item{out_dir}{Output directory.}
 
-\item{prefix}{Character}
+\item{prefix}{Filename prefix.}
 
-\item{reduction}{Character}
+\item{reduction}{Embedding reduction to use.}
+
+\item{assay}{Assay containing expression data.}
+
+\item{split_by}{Optional metadata column for splitting plots.}
+
+\item{keep_scale}{Whether to use a shared or per-feature scale.}
+}
+\value{
+Invisibly, `NULL`.
 }
 \description{
-Save a FeaturePlot for each gene in the list
+Generate FeaturePlots for a set of genes
 }

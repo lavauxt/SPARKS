@@ -2,8 +2,12 @@
 #' @param base_config_path Path to the template YAML
 #' @param override_config_path Path to your custom override YAML
 #' @param sample_metadata Data frame
+#' @param processed_samples Optional list of cached sample objects or RDS paths,
+#'   ordered to match sample_metadata. Used by the targets workflow.
+#' @param render_reports Logical. Generate per-group HTML reports.
 #' @export
-sparks <- function(base_config_path, override_config_path = NULL, sample_metadata = NULL) {
+sparks <- function(base_config_path, override_config_path = NULL, sample_metadata = NULL,
+                   processed_samples = NULL, render_reports = TRUE) {
   cfg <- load_pipeline_config(base_config_path, override_config_path)
   restore_rng <- .set_seed_preserving_state(cfg$processing$seed)
   on.exit(restore_rng(), add = TRUE)
@@ -66,15 +70,18 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     sample_metadata <- .validate_sample_table(sample_metadata)
   }
 
+  if (!is.null(processed_samples) &&
+      (!is.list(processed_samples) ||
+       length(processed_samples) != nrow(sample_metadata))) {
+    stop("processed_samples must have one item per sample_metadata row.",
+         call. = FALSE)
+  }
+  if (is.null(processed_samples)) {
+    sample_metadata <- .targets_sample_table(cfg, sample_metadata)
+  }
   if (isTRUE(cfg$pipeline$independent_samples)) {
     message("   [INFO] pipeline$independent_samples = TRUE: every sample is analysed ",
             "on its own (no merging, no between-sample comparison).")
-    sample_metadata$comparison_group <-
-      if (anyDuplicated(sample_metadata$folder_id) == 0L) {
-        sample_metadata$folder_id
-      } else {
-        paste(sample_metadata$comparison_group, sample_metadata$folder_id, sep = "_")
-      }
   }
 
   cfg$sample_metadata <- sample_metadata
@@ -89,7 +96,12 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     group_meta <- sample_metadata[sample_metadata$comparison_group == comp_group, ]
     dirs       <- .setup_group_dirs(cfg$pipeline$results_dir, comp_group)
 
-    protocol_objects <- lapply(seq_len(nrow(group_meta)), function(i) {
+    protocol_objects <- if (!is.null(processed_samples)) {
+      .load_cached_samples(
+        processed_samples,
+        which(sample_metadata$comparison_group == comp_group)
+      )
+    } else lapply(seq_len(nrow(group_meta)), function(i) {
       # BUG FIX: an entirely blank quant_format column is read as logical NA,
       # and nzchar(NA_character_) is TRUE -- so NA used to be passed on as the
       # format and every sample failed with "Unknown quant_format 'NA'". A blank
@@ -132,9 +144,12 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       next
     }
 
-    valid_idx  <- !sapply(protocol_objects, is.null)
-    merged_obj <- .merge_samples(valid_objects,
-                                 folder_ids = group_meta$folder_id[valid_idx])
+    valid_idx <- !vapply(protocol_objects, is.null, logical(1))
+    merged_obj <- .merge_samples(
+      valid_objects,
+      folder_ids = group_meta$folder_id[valid_idx],
+      add_cell_ids = is.null(processed_samples)
+    )
     cond_col    <- cfg$processing$condition_col
     cond_vec    <- as.character(merged_obj@meta.data[[cond_col]])
     cond_levels <- unique(as.character(group_meta$protocol))
@@ -289,7 +304,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     rm(merged_obj); gc()
   }
 
-  if (requireNamespace("rmarkdown", quietly = TRUE)) {
+  if (isTRUE(render_reports) && requireNamespace("rmarkdown", quietly = TRUE)) {
     qc_template <- .find_report_template(
       cfg$report$rmd_template, cfg$pipeline$config_dir, "qc_report.Rmd"
     )
@@ -350,7 +365,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
       }
       rm(report_obj)
     }
-  } else {
+  } else if (isTRUE(render_reports)) {
     message("   [SKIP HTML reports] Package 'rmarkdown' is not installed.")
   }
 

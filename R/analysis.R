@@ -49,7 +49,7 @@ run_deg_analysis <- function(seurat_obj, logfc_threshold, min_pct,
     }
 
     markers <- safe_run(
-      Seurat::FindMarkers(seurat_obj,
+      Seurat::FindMarkers(seurat_obj[["SCT"]],
         cells.1         = cells1,
         cells.2         = cells2,
         assay           = "SCT",
@@ -674,6 +674,23 @@ run_scproportion_test <- function(seurat_obj,
   conditions <- as.character(unique(md$condition))
   if (length(conditions) != 2) {
     message("   [SKIP] requires exactly 2 conditions")
+    return(invisible(NULL))
+  }
+
+  sample_map <- unique(data.frame(
+    sample = as.character(md$sample),
+    condition = as.character(md$condition),
+    stringsAsFactors = FALSE
+  ))
+  sample_map <- sample_map[!is.na(sample_map$sample) &
+                             !is.na(sample_map$condition), , drop = FALSE]
+  if (anyDuplicated(sample_map$sample)) {
+    message("   [SKIP scProportionTest] a sample is assigned to multiple conditions")
+    return(invisible(NULL))
+  }
+  replicates <- table(factor(sample_map$condition, levels = conditions))
+  if (any(replicates < 2L)) {
+    message("   [SKIP scProportionTest] at least 2 independent samples per condition are required")
     return(invisible(NULL))
   }
 

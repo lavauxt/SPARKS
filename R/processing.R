@@ -669,6 +669,16 @@ label_cells_by_markers <- function(seurat_obj, new_col_name, rules,
   )
 }
 
+#' Annotate cells with configured SingleR references
+#'
+#' @param seurat_obj A processed Seurat object.
+#' @param species_target Species name.
+#' @param ref_celldex1 Primary celldex reference name.
+#' @param ref_celldex2 Secondary celldex reference name.
+#' @param singler_cfg SingleR configuration list.
+#' @param reference_loader Optional function to load references.
+#' @return Seurat object with annotation metadata.
+#' @export
 run_singler_annotation <- function(seurat_obj, species_target, ref_celldex1, ref_celldex2,
                                     singler_cfg,
                                     reference_loader = function(name) {

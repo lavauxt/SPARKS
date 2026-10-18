@@ -26,6 +26,41 @@ library(Seurat)
 library(ggplot2)
 library(dplyr)
 library(knitr)
+has_plotly <- requireNamespace("plotly", quietly = TRUE)
+if (has_plotly) {
+  plotly_dependencies <- htmltools::findDependencies(plotly::plot_ly())
+  plotly_main <- Filter(function(dep) identical(dep$name, "plotly-main"),
+                        plotly_dependencies)
+  has_plotly <- length(plotly_main) == 1L && file.exists(file.path(
+    plotly_main[[1L]]$src$file, plotly_main[[1L]]$script
+  ))
+}
+
+.interactive_plot <- function(plot) {
+  if (has_plotly) {
+    plotly::ggplotly(plot, tooltip = "text") |>
+      plotly::config(displayModeBar = TRUE, scrollZoom = TRUE)
+  } else {
+    plot
+  }
+}
+
+.qc_umap_plot <- function(obj, color_by, title) {
+  embedding <- as.data.frame(Seurat::Embeddings(obj, "umap"))
+  if (ncol(embedding) < 2L) return(NULL)
+  embedding <- embedding[, 1:2, drop = FALSE]
+  names(embedding) <- c("UMAP_1", "UMAP_2")
+  embedding$cell <- rownames(embedding)
+  embedding$group <- as.character(obj@meta.data[[color_by]])
+  p <- ggplot(embedding, aes(
+    UMAP_1, UMAP_2, color = group,
+    text = paste("Cell:", cell, "<br>", color_by, ":", group)
+  )) +
+    geom_point(size = 0.6, alpha = 0.75) +
+    labs(title = title, x = "UMAP 1", y = "UMAP 2", color = color_by) +
+    theme_minimal()
+  .interactive_plot(p)
+}
 
 # `%||%` is exported by SPARKS but is not on the search path when the package is
 # only loaded (SPARKS::sparks()), and base R only has it from 4.4.0.
@@ -122,7 +157,9 @@ if (!is.null(cfg)) {
 }
 ```
 
-Doublet removal used scDblFinder. Per-sample stats are in `QC/Doublet_Removed_*.txt`.
+Doublet removal used scDblFinder.
+
+Per-sample doublet statistics are linked in the downloadable files section below.
 
 ## QC metrics after filtering
 
@@ -130,8 +167,26 @@ Doublet removal used scDblFinder. Per-sample stats are in `QC/Doublet_Removed_*.
 qc_features <- intersect(c("nFeature_RNA", "nCount_RNA", "percent.mt"),
                           colnames(obj[[]]))
 if (length(qc_features)) {
-  print(VlnPlot(obj, features = qc_features, ncol = min(3L, length(qc_features)),
-                pt.size = 0.1))
+  metadata <- obj@meta.data
+  metadata$sample <- if ("orig.ident" %in% colnames(metadata)) {
+    as.character(metadata$orig.ident)
+  } else "All cells"
+  qc_long <- tidyr::pivot_longer(
+    metadata[, c(qc_features, "sample"), drop = FALSE],
+    cols = all_of(qc_features), names_to = "metric", values_to = "value"
+  )
+  p <- ggplot(qc_long, aes(sample, value, fill = sample,
+                           text = paste("Sample:", sample,
+                                        "<br>Metric:", metric,
+                                        "<br>Value:", signif(value, 4)))) +
+    geom_violin(scale = "width", trim = TRUE) +
+    geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.6) +
+    facet_wrap(~ metric, scales = "free_y", ncol = min(3L, length(qc_features))) +
+    labs(x = NULL, y = NULL) +
+    theme_minimal() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 30,
+                                                                  hjust = 1))
+  .interactive_plot(p)
 } else {
   cat("QC metric columns are not available in this object.\n")
 }
@@ -141,9 +196,25 @@ if (length(qc_features)) {
 scatter_features <- intersect(c("nCount_RNA", "percent.mt", "nFeature_RNA"),
                               colnames(obj[[]]))
 if (all(c("nCount_RNA", "percent.mt", "nFeature_RNA") %in% scatter_features)) {
-  p2 <- FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
-  p3 <- FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
-  print(p2 + p3)
+  scatter_data <- obj@meta.data |>
+    dplyr::transmute(
+      cell = rownames(obj@meta.data),
+      nCount_RNA = .data$nCount_RNA,
+      percent.mt = .data$percent.mt,
+      nFeature_RNA = .data$nFeature_RNA
+    ) |>
+    tidyr::pivot_longer(c(percent.mt, nFeature_RNA), names_to = "metric",
+                        values_to = "value")
+  p <- ggplot(scatter_data, aes(
+    nCount_RNA, value,
+    text = paste("Cell:", cell, "<br>nCount_RNA:", nCount_RNA,
+                 "<br>", metric, ":", signif(value, 4))
+  )) +
+    geom_point(alpha = 0.45, size = 0.6) +
+    facet_wrap(~ metric, scales = "free_y") +
+    labs(x = "nCount_RNA", y = NULL) +
+    theme_minimal()
+  .interactive_plot(p)
 } else {
   cat("Scatter plot metadata is not available.\n")
 }
@@ -189,8 +260,7 @@ if (!"seurat_clusters" %in% colnames(obj[[]])) {
 } else if (!"umap" %in% names(obj@reductions)) {
   cat("UMAP reduction is not available.\n")
 } else {
-  print(DimPlot(obj, reduction = "umap", group.by = "seurat_clusters", label = TRUE) +
-          ggtitle(paste("UMAP -", group)))
+  .qc_umap_plot(obj, "seurat_clusters", paste("UMAP -", group))
 }
 ```
 

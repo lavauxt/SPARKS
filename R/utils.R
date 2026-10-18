@@ -104,15 +104,19 @@ safe_run <- function(expr, label = "Task", fallback = NULL) {
   })
 }
 
+.report_result_file_pattern <- function() {
+  "^(AllMarkers|DEG_Counts_|AvgExpr_|Proportions_|PseudobulkDEG_|PseudobulkCounts_|GSEA_|Correlations_|Escape_Heatmap_|Escape_Scores_|.*_FeaturePlot_|VlnPlot_)"
+}
+
+.is_report_result_file <- function(paths) {
+  grepl(.report_result_file_pattern(), basename(paths))
+}
+
 .snapshot_result_files <- function(root) {
   files <- list.files(root, recursive = TRUE, full.names = TRUE,
                       all.files = TRUE, no.. = TRUE)
   files <- files[file.info(files)$isdir %in% FALSE]
-  report_tables <- grepl(
-    "^(AllMarkers|DEG_Counts_|AvgExpr_|Proportions_|PseudobulkDEG_|PseudobulkCounts_|GSEA_|Correlations_|.*_FeaturePlot_|VlnPlot_)",
-    basename(files)
-  )
-  files <- files[report_tables]
+  files <- files[.is_report_result_file(files)]
   files <- normalizePath(files, winslash = "/", mustWork = FALSE)
   info <- file.info(files)
   snapshot <- data.frame(size = info$size, mtime = info$mtime,
@@ -132,6 +136,130 @@ safe_run <- function(expr, label = "Task", fallback = NULL) {
     current$checksum[!is_new] != snapshot$checksum[old[!is_new]]
   normalizePath(rownames(current)[is_new | changed], winslash = "/",
                 mustWork = FALSE)
+}
+
+.report_file_href <- function(path, report_dir) {
+  if (!is.character(path) || length(path) != 1L || is.na(path) ||
+      !nzchar(path)) {
+    stop("path must be one existing file path.", call. = FALSE)
+  }
+  if (!is.character(report_dir) || length(report_dir) != 1L ||
+      is.na(report_dir) || !nzchar(report_dir)) {
+    stop("report_dir must be one existing directory path.", call. = FALSE)
+  }
+  path <- normalizePath(path, winslash = "/", mustWork = TRUE)
+  report_dir <- normalizePath(report_dir, winslash = "/", mustWork = TRUE)
+  path_parts <- strsplit(path, "/", fixed = TRUE)[[1L]]
+  dir_parts <- strsplit(report_dir, "/", fixed = TRUE)[[1L]]
+  comparable_path <- if (.Platform$OS.type == "windows") tolower(path_parts) else
+    path_parts
+  comparable_dir <- if (.Platform$OS.type == "windows") tolower(dir_parts) else
+    dir_parts
+  common <- 0L
+  limit <- min(length(path_parts), length(dir_parts))
+  while (common < limit &&
+         identical(comparable_path[common + 1L], comparable_dir[common + 1L])) {
+    common <- common + 1L
+  }
+  if (common == 0L) {
+    stop("Report and linked file must be on the same filesystem root.",
+         call. = FALSE)
+  }
+  remaining <- length(path_parts) - common
+  relative <- c(rep("..", length(dir_parts) - common),
+                if (remaining > 0L) path_parts[(common + 1L):length(path_parts)])
+  utils::URLencode(paste(relative, collapse = "/"), reserved = FALSE)
+}
+
+.report_file_link <- function(path, report_dir, label = basename(path)) {
+  if (!requireNamespace("htmltools", quietly = TRUE)) {
+    stop("Report file links require package 'htmltools'.", call. = FALSE)
+  }
+  htmltools::tags$a(label, href = .report_file_href(path, report_dir),
+                    download = basename(path))
+}
+
+.report_result_file_pattern <- function() {
+  "^(AllMarkers|DEG_Counts_|AvgExpr_|Proportions_|PseudobulkDEG_|PseudobulkCounts_|GSEA_|Correlations_|Escape_Heatmap_|Escape_Scores_|.*_FeaturePlot_|VlnPlot_)"
+}
+
+.is_report_result_file <- function(paths) {
+  grepl(.report_result_file_pattern(), basename(paths))
+}
+
+.append_report_download_section <- function(report_path, files, title) {
+  if (!file.exists(report_path) || dir.exists(report_path)) {
+    stop("report_path must identify an existing file.", call. = FALSE)
+  }
+  if (!is.character(title) || length(title) != 1L || is.na(title) ||
+      !nzchar(title)) {
+    stop("title must be one non-empty string.", call. = FALSE)
+  }
+  if (!is.character(files)) {
+    stop("files must be a character vector of file paths.", call. = FALSE)
+  }
+  files <- unique(files[!is.na(files) & file.exists(files)])
+  file_type <- function(path) {
+    ext <- tolower(tools::file_ext(path))
+    if (ext %in% c("png", "jpg", "jpeg", "svg", "pdf")) "Plots" else
+      if (ext %in% c("csv", "tsv", "txt")) "Tables" else "Other files"
+  }
+  groups <- split(files, vapply(files, file_type, character(1)))
+  categories <- lapply(names(groups), function(category) {
+    links <- lapply(groups[[category]], function(path) {
+      rel_path <- .report_file_href(path, dirname(report_path))
+      label <- paste0(basename(path), " — ", dirname(rel_path))
+      htmltools::tags$li(
+        `data-search` = tolower(paste(label, rel_path)),
+        .report_file_link(path, dirname(report_path), label)
+      )
+    })
+    htmltools::tags$details(
+      class = "sparks-download-category",
+      htmltools::tags$summary(paste0(category, " (", length(links), ")")),
+      htmltools::tags$ul(links)
+    )
+  })
+  section <- if (length(files)) htmltools::renderTags(htmltools::tags$section(
+    id = "sparks-downloads",
+    class = "sparks-download-ribbon",
+    htmltools::tags$style(htmltools::HTML(
+      "#sparks-downloads{position:sticky;top:0;z-index:1000;background:#fff;border:1px solid #cbd5e1;border-radius:.5rem;padding:.45rem .75rem;margin:0 0 1rem;box-shadow:0 2px 8px #0002}#sparks-downloads>details>summary{cursor:pointer;font-weight:600;list-style:none}#sparks-downloads>details>summary::-webkit-details-marker{display:none}#sparks-downloads>details>summary:before{content:'▸';display:inline-block;width:1.2em}#sparks-downloads>details[open]>summary:before{content:'▾'}#sparks-downloads .sparks-download-panel{max-height:65vh;overflow:auto;padding:.75rem 0 .25rem}#sparks-downloads input{box-sizing:border-box;width:min(100%,32rem);padding:.45rem;margin:0 0 .5rem}#sparks-downloads .sparks-download-category{margin:.25rem 0}#sparks-downloads .sparks-download-category>summary{cursor:pointer;font-weight:600}#sparks-downloads ul{margin:.25rem 0;padding-left:1.5rem}#sparks-downloads li{padding:.15rem 0;overflow-wrap:anywhere}"
+    )),
+    htmltools::tags$details(
+      htmltools::tags$summary(paste0(title, " (", length(files), ")")),
+      htmltools::tags$div(
+        class = "sparks-download-panel",
+        htmltools::tags$label(
+          `for` = "sparks-download-search", "Filter files"
+        ),
+        htmltools::tags$input(
+          id = "sparks-download-search", type = "search",
+          placeholder = "Search file names or folders",
+          `aria-label` = "Filter downloadable files"
+        ),
+        categories
+      )
+    ),
+    htmltools::tags$script(htmltools::HTML(
+      "document.addEventListener('input',function(e){if(e.target.id!=='sparks-download-search')return;var q=e.target.value.toLowerCase();document.querySelectorAll('#sparks-downloads li[data-search]').forEach(function(li){li.hidden=!li.dataset.search.includes(q)});document.querySelectorAll('#sparks-downloads .sparks-download-category').forEach(function(g){var shown=g.querySelectorAll('li:not([hidden])').length;g.hidden=shown===0;if(q&&shown)g.open=true;});});"
+    ))
+  ))$html else ""
+  report_path <- normalizePath(report_path, winslash = "/", mustWork = TRUE)
+  html <- paste(readLines(report_path, warn = FALSE, encoding = "UTF-8"),
+                collapse = "\n")
+  html <- gsub("(?s)<section id=\"sparks-downloads\".*?</section>", "", html,
+               perl = TRUE)
+  if (!grepl("</body>", html, fixed = TRUE)) {
+    stop("report_path does not contain a closing </body> tag.", call. = FALSE)
+  }
+  if (!grepl("(?i)<body(?:\\s[^>]*)?>", html, perl = TRUE)) {
+    stop("report_path does not contain an opening <body> tag.", call. = FALSE)
+  }
+  html <- sub("(?i)(<body(?:\\s[^>]*)?>)", paste0("\\1\n", section),
+              html, perl = TRUE)
+  writeLines(html, report_path, useBytes = TRUE)
+  invisible(report_path)
 }
 
 #' Save a plot to PNG using ggsave or base R for pheatmap/gtable
@@ -337,12 +465,13 @@ get_junk_pattern <- function(species = "Mouse") {
   dirs
 }
 
-.merge_samples <- function(obj_list, folder_ids) {
+.merge_samples <- function(obj_list, folder_ids, add_cell_ids = TRUE) {
   obj_list <- Filter(Negate(is.null), obj_list)
   if (length(obj_list) == 0L) stop("No valid samples to merge.")
   if (length(obj_list) == 1L) return(obj_list[[1L]])
-  obj <- merge(obj_list[[1L]], y = obj_list[-1L],
-               add.cell.ids = as.character(folder_ids))
+  merge_args <- list(x = obj_list[[1L]], y = obj_list[-1L])
+  if (isTRUE(add_cell_ids)) merge_args$add.cell.ids <- as.character(folder_ids)
+  obj <- do.call(merge, merge_args)
   SeuratObject::JoinLayers(obj)
 }
 
@@ -422,6 +551,15 @@ generate_qc_report <- function(seurat_obj, comp_group, out_dir,
       log_path = log_path
     )
   )
+  doublet_files <- c(run_files, list.files(
+    file.path(dirname(dirname(out_dir)), "Sample_QC"), recursive = TRUE,
+    pattern = "^Doublet_Removed_.*[.]txt$", full.names = TRUE
+  ))
+  doublet_files <- doublet_files[!is.na(doublet_files) &
+    grepl("^Doublet_Removed_.*[.]txt$",
+                                       basename(doublet_files))]
+  .append_report_download_section(output_file, doublet_files,
+                                  "Per-sample doublet statistics")
 
   message("   QC report saved to: ", output_file)
   invisible(output_file)
@@ -486,6 +624,11 @@ generate_results_report <- function(seurat_obj, comp_group, out_dir,
       log_path = log_path
     )
   )
+  report_files <- list.files(out_dir, recursive = TRUE, full.names = TRUE)
+  report_files <- report_files[!file.info(report_files)$isdir %in% TRUE]
+  report_files <- report_files[.is_report_result_file(report_files)]
+  .append_report_download_section(output_file, report_files,
+                                  "Download result files")
 
   message("   Results report saved to: ", output_file)
   invisible(output_file)

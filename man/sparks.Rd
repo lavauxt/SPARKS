@@ -4,7 +4,13 @@
 \alias{sparks}
 \title{Run the complete scRNA-seq pipeline}
 \usage{
-sparks(base_config_path, override_config_path = NULL, sample_metadata = NULL)
+sparks(
+  base_config_path,
+  override_config_path = NULL,
+  sample_metadata = NULL,
+  processed_samples = NULL,
+  render_reports = TRUE
+)
 }
 \arguments{
 \item{base_config_path}{Path to the template YAML}
@@ -12,6 +18,11 @@ sparks(base_config_path, override_config_path = NULL, sample_metadata = NULL)
 \item{override_config_path}{Path to your custom override YAML}
 
 \item{sample_metadata}{Data frame}
+
+\item{processed_samples}{Optional list of cached sample objects or RDS paths,
+ordered to match sample_metadata. Used by the targets workflow.}
+
+\item{render_reports}{Logical. Generate per-group HTML reports.}
 }
 \description{
 Run the complete scRNA-seq pipeline

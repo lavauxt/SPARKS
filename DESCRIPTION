@@ -17,6 +17,7 @@ Collate:
     'qc_utils.R'
     'sex_scoring.R'
     'visualization.R'
+    'interface.R'
 Depends:
     R (>= 4.1.0)
 Imports:
@@ -47,6 +48,12 @@ Imports:
     eds,
     glmGamPoi
 Suggests:
+    shiny,
+    bslib,
+    targets,
+    base64enc,
+    callr,
+    zip,
     rmarkdown,
     knitr,
     DT,

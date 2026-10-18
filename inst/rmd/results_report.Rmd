@@ -118,6 +118,32 @@ if (!exists("%||%", mode = "function")) {
   }
 }
 
+.image_plotly <- function(path, title = basename(path)) {
+  if (!has_plotly || !requireNamespace("base64enc", quietly = TRUE)) {
+    return(knitr::include_graphics(path))
+  }
+  image_source <- base64enc::dataURI(file = path, mime = "image/png")
+  plotly::plot_ly() |>
+    plotly::add_trace(type = "image", source = image_source,
+                      x0 = 0, y0 = 0, dx = 1, dy = 1) |>
+    plotly::layout(
+      title = list(text = title),
+      xaxis = list(visible = FALSE, scaleanchor = "y"),
+      yaxis = list(visible = FALSE, autorange = "reversed")
+    ) |>
+    plotly::config(displayModeBar = TRUE, scrollZoom = TRUE)
+}
+
+.plotly_asset_available <- function() {
+  if (!has_plotly) return(FALSE)
+  dependency <- htmltools::findDependencies(plotly::plot_ly())
+  main <- Filter(function(dep) identical(dep$name, "plotly-main"), dependency)
+  length(main) == 1L &&
+    file.exists(file.path(main[[1L]]$src$file, main[[1L]]$script))
+}
+
+has_plotly <- .plotly_asset_available()
+
 # ── Materialise params ────────────────────────────────────────────────────────
 obj        <- params$seurat_obj
 comp_group <- params$comp_group
@@ -537,7 +563,7 @@ if (length(gsea_projection_files)) {
   cat("> NES is a group-level pseudobulk GSEA result repeated across cells in the matching metadata group; it is not a per-cell enrichment score.\n\n")
   for (f in gsea_projection_files) {
     cat("#### ", basename(f), "\n\n", sep = "")
-    print(knitr::include_graphics(f))
+    print(.image_plotly(f, basename(f)))
   }
 } else if (!is.null(cfg$gsea$plot_projection) &&
            !isTRUE(cfg$gsea$plot_projection)) {
@@ -663,7 +689,7 @@ escape_plot_files <- .current_files(list.files(
 if (length(escape_plot_files)) {
   for (f in escape_plot_files) {
     cat("\n#### ", basename(f), "\n\n", sep = "")
-    print(knitr::include_graphics(f))
+    print(.image_plotly(f, basename(f)))
   }
 }
 
