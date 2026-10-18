@@ -79,6 +79,30 @@ cfg    <- params$cfg   # may be NULL when report is rendered standalone
 
 # QC Report: `r group`
 
+## Report guide
+
+This report summarizes post-filtering data quality for **`r group`**. Use the table of contents to navigate the dataset summary, input and filtering details, QC metrics, doublet and scoring summaries, clustering, session information, and pipeline diagnostics.
+
+```{r report-at-a-glance}
+qc_summary <- data.frame(
+  Item = c("Comparison group", "Cells after filtering", "Genes",
+           "Samples", "Conditions", "QC metrics available"),
+  Value = c(
+    group,
+    format(ncol(obj), big.mark = ","),
+    format(nrow(obj), big.mark = ","),
+    if ("orig.ident" %in% colnames(obj[[]]))
+      length(unique(obj$orig.ident)) else "Not available",
+    if ("condition" %in% colnames(obj[[]]))
+      length(unique(obj$condition)) else "Not available",
+    paste(intersect(c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+                    colnames(obj[[]])), collapse = ", ")
+  ),
+  stringsAsFactors = FALSE
+)
+print(kable(qc_summary, col.names = c("Summary item", "Value")))
+```
+
 ## Summary of the dataset
 
 ```{r summary}
@@ -162,6 +186,72 @@ Doublet removal used scDblFinder.
 Per-sample doublet statistics are linked in the downloadable files section below.
 
 ## QC metrics after filtering
+
+### Per-sample QC summary
+
+```{r qc-summary-by-sample, results='asis'}
+qc_summary_cols <- intersect(c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+                             colnames(obj@meta.data))
+qc_group_col <- if ("orig.ident" %in% colnames(obj@meta.data)) "orig.ident" else
+  if ("condition" %in% colnames(obj@meta.data)) "condition" else NULL
+
+if (length(qc_summary_cols) && !is.null(qc_group_col)) {
+  qc_summary_long <- obj@meta.data |>
+    dplyr::mutate(.group = as.character(.data[[qc_group_col]])) |>
+    tidyr::pivot_longer(dplyr::all_of(qc_summary_cols),
+                        names_to = "Metric", values_to = "Value") |>
+    dplyr::group_by(.group, Metric) |>
+    dplyr::summarise(
+      Cells = sum(!is.na(Value)),
+      Median = if (any(!is.na(Value))) stats::median(Value, na.rm = TRUE) else NA_real_,
+      Q1 = if (any(!is.na(Value))) stats::quantile(Value, 0.25, na.rm = TRUE, names = FALSE) else NA_real_,
+      Q3 = if (any(!is.na(Value))) stats::quantile(Value, 0.75, na.rm = TRUE, names = FALSE) else NA_real_,
+      .groups = "drop"
+    ) |>
+    dplyr::rename(Group = .group)
+  qc_summary_long[c("Median", "Q1", "Q3")] <- lapply(
+    qc_summary_long[c("Median", "Q1", "Q3")], round, digits = 2
+  )
+  print(kable(qc_summary_long, caption = paste("QC summary by", qc_group_col),
+              row.names = FALSE))
+} else {
+  cat("> Per-sample QC summary is unavailable because sample/condition grouping or QC metrics are missing.\n")
+}
+```
+
+### Recorded pipeline stage counts
+
+```{r stage-counts, results='asis'}
+stage_files <- list.files(
+  out_dir, pattern = "^(before_SCT|after_clustering)_.*_cell_counts[.]txt$",
+  recursive = TRUE, full.names = TRUE
+)
+if (length(stage_files)) {
+  stage_counts <- lapply(stage_files, function(path) {
+    lines <- readLines(path, warn = FALSE)
+    total_line <- grep("^Total cells:", lines, value = TRUE)
+    if (!length(total_line)) return(NULL)
+    data.frame(
+      Stage = if (grepl("^before_SCT", basename(path))) "Before SCT" else
+        "After clustering",
+      File = basename(path),
+      Cells = suppressWarnings(as.integer(sub("^Total cells:[[:space:]]*", "",
+                                             total_line[1L]))),
+      stringsAsFactors = FALSE
+    )
+  })
+  stage_counts <- Filter(Negate(is.null), stage_counts)
+  if (length(stage_counts)) {
+    print(kable(do.call(rbind, stage_counts),
+                caption = "Cell counts at recorded pipeline stages",
+                row.names = FALSE))
+  } else {
+    cat("> No total-cell counts could be parsed from the stage files.\n")
+  }
+} else {
+  cat("> Pipeline stage count files are not available for this run.\n")
+}
+```
 
 ```{r qc-violin, fig.width=12, fig.height=5}
 qc_features <- intersect(c("nFeature_RNA", "nCount_RNA", "percent.mt"),

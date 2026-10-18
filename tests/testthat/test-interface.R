@@ -14,6 +14,139 @@ test_that("result catalog classifies files and excludes targets internals", {
   expect_true(all(file.exists(catalog$path)))
 })
 
+test_that("report catalog lists only HTML reports", {
+  results <- tempfile("sparks-report-catalog-")
+  dir.create(file.path(results, "group"), recursive = TRUE)
+  writeLines("<html></html>", file.path(results, "group", "QC_report.html"))
+  writeLines("<html></html>", file.path(results, "group", "Results_report.html"))
+  writeLines("table", file.path(results, "group", "counts.tsv"))
+  on.exit(unlink(results, recursive = TRUE), add = TRUE)
+
+  reports <- SPARKS:::.report_catalog(results)
+  expect_equal(nrow(reports), 2L)
+  expect_true(all(reports$type == "Report"))
+  expect_setequal(basename(reports$path),
+                  c("QC_report.html", "Results_report.html"))
+})
+
+test_that("Reports tab refreshes and selects available HTML reports", {
+  skip_if_not_installed("shiny")
+  skip_if_not_installed("bslib")
+  skip_if_not_installed("DT")
+  skip_if_not_installed("base64enc")
+  skip_if_not_installed("htmltools")
+
+  app <- SPARKS::sparks_app()
+  results <- tempfile("sparks-report-browser-")
+  dir.create(results)
+  on.exit(unlink(results, recursive = TRUE), add = TRUE)
+  writeLines("<html><body>report</body></html>",
+             file.path(results, "Results_report_group.html"))
+
+  shiny::testServer(app$serverFuncSource(), {
+    session$setInputs(report_dir = results, report_refresh = 1,
+                      selected_report = file.path(results,
+                                                  "Results_report_group.html"))
+    session$flushReact()
+    expect_match(output$report_status, "1 report")
+    expect_identical(
+      selected_report(),
+      normalizePath(file.path(results, "Results_report_group.html"),
+                    winslash = "/")
+    )
+  })
+})
+
+test_that("Shiny navigation uses task-focused top-level tabs", {
+  expect_identical(
+    SPARKS:::.sparks_nav_labels,
+    c(run = "Run", explore = "Explore", qc = "QC & annotation",
+      results = "Results", reports = "Reports")
+  )
+})
+
+test_that("QC and results templates provide summaries and report navigation", {
+  qc <- paste(readLines(testthat::test_path("..", "..", "inst", "rmd",
+                                            "qc_report.Rmd"), warn = FALSE),
+              collapse = "\n")
+  results <- paste(readLines(testthat::test_path("..", "..", "inst", "rmd",
+                                                 "results_report.Rmd"),
+                              warn = FALSE), collapse = "\n")
+
+  expect_match(qc, "Report guide")
+  expect_match(qc, "QC metrics available")
+  expect_match(results, "Report guide")
+  expect_match(results, "SingleR annotations")
+  expect_lt(regexpr("SPARKS_DOWNLOADS", results, fixed = TRUE)[[1L]],
+            regexpr("Session Info", results, fixed = TRUE)[[1L]])
+  expect_gt(regexpr("Pipeline diagnostics", results, fixed = TRUE)[[1L]],
+            regexpr("Session Info", results, fixed = TRUE)[[1L]])
+  expect_lt(regexpr("SPARKS_DOWNLOADS", qc, fixed = TRUE)[[1L]],
+            regexpr("Session info", qc, fixed = TRUE)[[1L]])
+  expect_gt(regexpr("Pipeline diagnostics", qc, fixed = TRUE)[[1L]],
+            regexpr("Session info", qc, fixed = TRUE)[[1L]])
+})
+
+test_that("QC and results reports render with summary and section order", {
+  skip_if_not_installed("rmarkdown")
+  skip_if_not_installed("Seurat")
+
+  object <- suppressWarnings(Seurat::CreateSeuratObject(
+    counts = matrix(
+      c(1, 2, 3, 4, 5, 6), nrow = 2,
+      dimnames = list(c("g1", "g2"), paste0("cell", 1:3))
+    )
+  ))
+  object$orig.ident <- c("s1", "s1", "s2")
+  object$condition <- c("A", "A", "B")
+  object$seurat_clusters <- c("0", "1", "1")
+  object$singleR_labels_fine <- c("T cell", "B cell", "B cell")
+  object$nFeature_RNA <- c(2, 2, 2)
+  object$nCount_RNA <- c(3, 7, 11)
+  object$percent.mt <- c(1, 2, 3)
+  object[["umap"]] <- Seurat::CreateDimReducObject(
+    embeddings = matrix(c(0, 0, 1, 1, 2, 2), ncol = 2,
+                        dimnames = list(colnames(object), c("UMAP_1", "UMAP_2"))),
+    key = "UMAP_", assay = "RNA"
+  )
+  output_dir <- tempfile("sparks-report-smoke-")
+  dir.create(output_dir)
+  marker_dir <- file.path(output_dir, "fixture", "cluster", "DEG")
+  dir.create(marker_dir, recursive = TRUE)
+  utils::write.table(data.frame(
+    gene = c("g1", "g2", "g1"),
+    cluster = c("0", "0", "1"),
+    avg_log2FC = c(1.2, -0.4, 0.7),
+    p_val_adj = c(0.01, 0.2, 0.03)
+  ), file.path(marker_dir, "AllMarkers_fixture_by_seurat_clusters.txt"),
+  sep = "\t", quote = FALSE, row.names = FALSE)
+  on.exit(unlink(output_dir, recursive = TRUE), add = TRUE)
+  qc_template <- testthat::test_path("..", "..", "inst", "rmd", "qc_report.Rmd")
+  results_template <- testthat::test_path("..", "..", "inst", "rmd",
+                                          "results_report.Rmd")
+
+  qc_path <- SPARKS::generate_qc_report(
+    object, "fixture", output_dir, rmd_template = qc_template
+  )
+  results_path <- SPARKS::generate_results_report(
+    object, "fixture", output_dir, rmd_template = results_template
+  )
+  qc_html <- paste(readLines(qc_path, warn = FALSE), collapse = "\n")
+  results_html <- paste(readLines(results_path, warn = FALSE), collapse = "\n")
+
+  expect_match(qc_html, "Report guide")
+  expect_match(qc_html, "Cells after filtering")
+  expect_match(qc_html, "Per-sample QC summary")
+  expect_match(qc_html, "Recorded pipeline stage counts")
+  expect_match(results_html, "Report guide")
+  expect_match(results_html, "SingleR annotations")
+  expect_match(results_html, "Marker results at a glance")
+  expect_lt(regexpr("sparks-downloads", results_html, fixed = TRUE)[[1L]],
+            regexpr("Session Info", results_html, fixed = TRUE)[[1L]])
+  expect_gt(regexpr("Pipeline diagnostics", results_html, fixed = TRUE)[[1L]],
+            regexpr("Session Info", results_html, fixed = TRUE)[[1L]])
+})
+
 test_that("targets helper group calculations agree with independent mode", {
   table <- data.frame(folder_id = c("a", "b"),
                       comparison_group = c("g", "g"))
@@ -158,6 +291,37 @@ test_that("overview explorer handles metadata and continuous coloring", {
                    "metadata")
   expect_equal(SPARKS:::.overview_color_values(c(1, 2)), c(1, 2))
   expect_s3_class(SPARKS:::.overview_color_values(c("a", "b")), "factor")
+})
+
+test_that("explorer supports chosen reductions and gene co-expression", {
+  skip_if_not_installed("Seurat")
+  object <- suppressWarnings(Seurat::CreateSeuratObject(
+    counts = matrix(
+      c(1, 2, 3, 4, 2, 4, 6, 8), nrow = 2,
+      dimnames = list(c("g1", "g2"), paste0("cell", 1:4))
+    )
+  ))
+  object$seurat_clusters <- c("0", "0", "1", "1")
+  object[["umap"]] <- Seurat::CreateDimReducObject(
+    embeddings = matrix(1:8, ncol = 2,
+                        dimnames = list(colnames(object), c("UMAP_1", "UMAP_2"))),
+    key = "UMAP_", assay = "RNA"
+  )
+  object[["pca"]] <- Seurat::CreateDimReducObject(
+    embeddings = matrix(8:1, ncol = 2,
+                        dimnames = list(colnames(object), c("PC_1", "PC_2"))),
+    key = "PC_", assay = "RNA"
+  )
+
+  pca_data <- SPARKS:::.explorer_plot_data(object, "seurat_clusters",
+                                            reduction = "pca")
+  coexpression <- SPARKS:::.gene_coexpression_frame(object, "g1", "g2")
+  expect_equal(as.numeric(pca_data$x),
+               as.numeric(Seurat::Embeddings(object, "pca")[, 1L]))
+  expect_equal(nrow(coexpression), 4L)
+  expect_true(all(coexpression$expression_y > coexpression$expression_x))
+  expect_error(SPARKS:::.gene_coexpression_frame(object, "g1", "g1"),
+               "two different genes")
 })
 
 test_that("overview composition summaries count metadata levels", {

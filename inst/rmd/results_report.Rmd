@@ -172,6 +172,32 @@ if (is.null(groupings) || length(groupings) == 0L) {
 
 ---
 
+## Report guide
+
+This report summarizes the available results for **`r comp_group`**. Use the table of contents to jump to dataset overview, QC, clustering, annotation, differential expression, pathway scoring, downloadable files, session information, and diagnostics. Sections with unavailable analyses state that explicitly.
+
+```{r report-at-a-glance}
+summary_df <- data.frame(
+  Item = c("Comparison group", "Cells", "Genes", "Clusters",
+           "Conditions", "Samples", "SingleR annotations"),
+  Value = c(
+    comp_group,
+    format(ncol(obj), big.mark = ","),
+    format(nrow(obj), big.mark = ","),
+    if (.col_exists(obj, "seurat_clusters"))
+      length(unique(obj$seurat_clusters)) else "Not available",
+    if (.col_exists(obj, "condition"))
+      length(unique(obj$condition)) else "Not available",
+    if (.col_exists(obj, "orig.ident"))
+      length(unique(obj$orig.ident)) else "Not available",
+    length(grep("^singleR_labels", colnames(obj@meta.data)))
+  ),
+  stringsAsFactors = FALSE
+)
+knitr::kable(summary_df, col.names = c("Summary item", "Value"),
+             align = c("l", "r"))
+```
+
 ## 1 · Dataset Overview {.tabset}
 
 ```{r overview}
@@ -391,6 +417,7 @@ if (length(deg_files) == 0L) {
     cat("> No cell-level DEG tables are available. This can occur when comparisons had fewer than two conditions, groups had too few cells, or no test results were produced.\n\n")
   }
 } else {
+  marker_summaries <- list()
   for (deg_f in deg_files) {
     tab_label <- gsub("AllMarkers_|_|.txt$", " ", basename(deg_f))
     cat("\n### ", trimws(tab_label), "\n\n")
@@ -415,10 +442,47 @@ if (length(deg_files) == 0L) {
     num_cols <- vapply(deg_tbl, is.numeric, logical(1))
     deg_tbl[num_cols] <- lapply(deg_tbl[num_cols], round, digits = 4)
 
+    cluster_col <- intersect(c("cluster", "Group"), names(deg_tbl))
+    padj_col <- intersect(c("p_val_adj", "FDR", "padj"), names(deg_tbl))
+    fold_col <- intersect(c("avg_log2FC", "avg_logFC", "logFC"), names(deg_tbl))
+    if (length(cluster_col) && length(padj_col) && length(fold_col)) {
+      cluster_col <- cluster_col[1L]
+      padj_col <- padj_col[1L]
+      fold_col <- fold_col[1L]
+      marker_summaries[[length(marker_summaries) + 1L]] <- deg_tbl |>
+        dplyr::mutate(
+          .cluster = as.character(.data[[cluster_col]]),
+          .padj = as.numeric(.data[[padj_col]]),
+          .fold = as.numeric(.data[[fold_col]])
+        ) |>
+        dplyr::group_by(.cluster) |>
+        dplyr::summarise(
+          Tested = dplyr::n(),
+          Adjusted_p_below_0_05 = sum(!is.na(.padj) & .padj < 0.05),
+          Median_absolute_log2FC = if (any(is.finite(.fold))) {
+            stats::median(abs(.fold[is.finite(.fold)]))
+          } else NA_real_,
+          .groups = "drop"
+        ) |>
+        dplyr::mutate(File = basename(deg_f), .before = 1L) |>
+        dplyr::rename(Group = .cluster)
+    }
+
     print(.nice_dt(deg_tbl,
                    caption  = paste("Cell-level DEG –", trimws(tab_label)),
                    page_len = 20))
     cat("\n")
+  }
+  if (length(marker_summaries)) {
+    cat("\n### Marker results at a glance\n\n")
+    marker_summary <- dplyr::bind_rows(marker_summaries)
+    marker_summary$Median_absolute_log2FC <- round(
+      marker_summary$Median_absolute_log2FC, 3
+    )
+    cat("Counts below use the adjusted-p-value column and a descriptive 0.05 cutoff; they do not add or rerun tests.\n\n")
+    print(.nice_dt(marker_summary,
+                   caption = "Marker table summaries by file and group",
+                   page_len = 20))
   }
 }
 ```

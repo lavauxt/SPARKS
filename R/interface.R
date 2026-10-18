@@ -313,11 +313,12 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
 }
 
 .explorer_plot_data <- function(object, feature, group_by = NULL,
+                                reduction = "umap",
                                 max_cells = 50000L) {
   reductions <- names(object@reductions)
-  reduction <- reductions[tolower(reductions) == "umap"][1L]
-  if (is.na(reduction) || !length(reduction)) {
-    stop("The selected Seurat object has no UMAP reduction.", call. = FALSE)
+  if (length(reduction) != 1L || is.na(reduction) ||
+      !reduction %in% reductions) {
+    stop("The selected dimensional reduction is unavailable.", call. = FALSE)
   }
   embedding <- Seurat::Embeddings(object, reduction = reduction)
   if (ncol(embedding) < 2L) {
@@ -341,6 +342,39 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
     x = embedding[cells, 1L],
     y = embedding[cells, 2L],
     value = .overview_color_values(values[cells]),
+    stringsAsFactors = FALSE
+  )
+  if (!is.null(group_by) && group_by %in% colnames(metadata)) {
+    data$group <- metadata[cells, group_by, drop = TRUE]
+  } else {
+    data$group <- "All cells"
+  }
+  data
+}
+
+.gene_coexpression_frame <- function(object, gene_x, gene_y,
+                                     group_by = NULL,
+                                     max_cells = 50000L) {
+  if (identical(gene_x, gene_y)) {
+    stop("Choose two different genes for co-expression.", call. = FALSE)
+  }
+  expression <- suppressWarnings(tryCatch(
+    Seurat::FetchData(object, vars = c(gene_x, gene_y), layer = "data"),
+    error = function(e) Seurat::FetchData(
+      object, vars = c(gene_x, gene_y), layer = "counts"
+    )
+  ))
+  metadata <- object[[]]
+  cells <- intersect(rownames(expression), rownames(metadata))
+  if (!length(cells)) {
+    stop("No matching expression values were found for the selected genes.",
+         call. = FALSE)
+  }
+  if (length(cells) > max_cells) cells <- cells[seq_len(max_cells)]
+  data <- data.frame(
+    cell = cells,
+    expression_x = expression[cells, gene_x],
+    expression_y = expression[cells, gene_y],
     stringsAsFactors = FALSE
   )
   if (!is.null(group_by) && group_by %in% colnames(metadata)) {
@@ -769,6 +803,14 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
 
 .target_group_key <- function(group) gsub("[^A-Za-z0-9_]+", "_", group)
 
+.sparks_nav_labels <- c(
+  run = "Run",
+  explore = "Explore",
+  qc = "QC & annotation",
+  results = "Results",
+  reports = "Reports"
+)
+
 .result_catalog <- function(results_dir) {
   if (!dir.exists(results_dir)) {
     stop("Results directory does not exist: ", results_dir, call. = FALSE)
@@ -800,6 +842,11 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
     size = unname(file.info(paths)$size),
     stringsAsFactors = FALSE
   )
+}
+
+.report_catalog <- function(results_dir) {
+  catalog <- .result_catalog(results_dir)
+  catalog[catalog$type == "Report", , drop = FALSE]
 }
 
 #' List downloadable SPARKS results
@@ -974,7 +1021,7 @@ sparks_app <- function(...) {
   ui <- bslib::page_navbar(
     title = "SPARKS",
     theme = bslib::bs_theme(version = 5),
-    bslib::nav_panel("Configure and run",
+    bslib::nav_panel(.sparks_nav_labels[["run"]],
       shiny::sidebarLayout(
         shiny::sidebarPanel(
           shiny::textInput("base_config", "Base YAML path"),
@@ -1018,12 +1065,13 @@ sparks_app <- function(...) {
           )
       )
     ),
-      bslib::nav_panel("Overview",
+      bslib::nav_panel(.sparks_nav_labels[["explore"]],
         shiny::sidebarLayout(
           shiny::sidebarPanel(
             shiny::textInput("overview_dir", "Results directory", "results"),
             shiny::actionButton("overview_refresh", "Refresh overview"),
             shiny::uiOutput("overview_group_choice"),
+            shiny::uiOutput("overview_reduction_choice"),
             shiny::uiOutput("overview_feature_choice"),
             shiny::uiOutput("overview_split_choice")
           ),
@@ -1049,6 +1097,9 @@ sparks_app <- function(...) {
                 shiny::uiOutput("overview_gene_violin_ui"),
                 DT::DTOutput("overview_expression_values")
               ),
+              bslib::nav_panel("Co-expression",
+                shiny::uiOutput("overview_coexpression_ui")
+              ),
               bslib::nav_panel("Composition",
                 shiny::uiOutput("overview_composition_ui"),
                 DT::DTOutput("overview_composition_table")
@@ -1058,7 +1109,14 @@ sparks_app <- function(...) {
           )
         )
       ),
-    bslib::nav_panel("Results",
+    bslib::nav_panel(.sparks_nav_labels[["qc"]],
+      bslib::card(
+        bslib::card_header("Quality control and cell annotation outputs"),
+        shiny::p("Browse QC and annotation files from the results directory selected in the Explore tab. Use Explore → Refresh overview to reload the catalog."),
+        DT::DTOutput("qc_annotation_catalog")
+      )
+    ),
+    bslib::nav_panel(.sparks_nav_labels[["results"]],
       shiny::sidebarLayout(
         shiny::sidebarPanel(shiny::textInput("browse_dir", "Results directory"),
                             shiny::actionButton("refresh", "Refresh"),
@@ -1069,6 +1127,20 @@ sparks_app <- function(...) {
                          DT::DTOutput("table_preview"),
                          shiny::uiOutput("plot_preview"),
                          shiny::downloadButton("download", "Download selected result"))
+      )
+    ),
+    bslib::nav_panel(.sparks_nav_labels[["reports"]],
+      shiny::sidebarLayout(
+        shiny::sidebarPanel(
+          shiny::textInput("report_dir", "Results directory", "results"),
+          shiny::actionButton("report_refresh", "Refresh reports"),
+          shiny::uiOutput("report_choice_ui"),
+          shiny::textOutput("report_status"),
+          shiny::downloadButton("report_download", "Download selected report")
+        ),
+        shiny::mainPanel(
+          shiny::uiOutput("report_preview_ui")
+        )
       )
     )
   )
@@ -1350,14 +1422,88 @@ sparks_app <- function(...) {
       } else data
     }, selection = "single", options = list(pageLength = 15, scrollX = TRUE))
 
+    report_catalog <- shiny::eventReactive(input$report_refresh, {
+      if (is.null(input$report_dir) || !nzchar(input$report_dir) ||
+          !dir.exists(input$report_dir)) {
+        data.frame(name = character(), path = character(), type = character(),
+                   size = numeric(), stringsAsFactors = FALSE)
+      } else .report_catalog(input$report_dir)
+    }, ignoreNULL = FALSE)
+    selected_report <- shiny::reactive({
+      path <- input$selected_report
+      if (is.null(path) || length(path) != 1L || is.na(path) ||
+          !file.exists(path) || dir.exists(path)) return(NULL)
+      reports <- report_catalog()
+      path <- normalizePath(path, winslash = "/", mustWork = TRUE)
+      if (!path %in% reports$path) return(NULL)
+      path
+    })
+    output$report_choice_ui <- shiny::renderUI({
+      reports <- report_catalog()
+      if (!nrow(reports)) {
+        return(shiny::helpText("No HTML reports found in this results directory."))
+      }
+      shiny::selectInput(
+        "selected_report", "Report",
+        choices = stats::setNames(reports$path, reports$name),
+        selected = reports$path[1L]
+      )
+    })
+    output$report_status <- shiny::renderText({
+      reports <- report_catalog()
+      if (is.null(input$report_dir) || !nzchar(input$report_dir) ||
+          !dir.exists(input$report_dir)) {
+        return("Results directory does not exist.")
+      }
+      if (!nrow(reports)) "No reports found." else
+        paste(nrow(reports), "report(s) available.")
+    })
+    output$report_preview_ui <- shiny::renderUI({
+      path <- selected_report()
+      if (is.null(path)) {
+        return(shiny::helpText("Select an HTML report to preview it here."))
+      }
+      size <- file.info(path)$size
+      if (is.na(size) || size > 25 * 1024^2) {
+        return(shiny::p(
+          "This report is larger than 25 MB to preview here. Download it to view locally."
+        ))
+      }
+      content <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"),
+                       collapse = "\n")
+      shiny::tags$iframe(
+        srcdoc = content,
+        sandbox = "allow-scripts",
+        title = basename(path),
+        style = "width:100%;height:75vh;border:1px solid #ddd"
+      )
+    })
+    output$report_download <- shiny::downloadHandler(
+      filename = function() {
+        path <- selected_report()
+        if (is.null(path)) "SPARKS_report.html" else basename(path)
+      },
+      content = function(file) {
+        path <- selected_report()
+        shiny::req(path)
+        if (!file.copy(path, file, overwrite = TRUE)) {
+          stop("Unable to copy selected report for download.", call. = FALSE)
+        }
+      }
+    )
+
     overview_catalog <- shiny::eventReactive(input$overview_refresh, {
-      if (!nzchar(input$overview_dir) || !dir.exists(input$overview_dir)) {
+      if (is.null(input$overview_dir) || !nzchar(input$overview_dir) ||
+          !dir.exists(input$overview_dir)) {
         data.frame(name = character(), path = character(), type = character(),
                    size = numeric(), stringsAsFactors = FALSE)
       } else .result_catalog(input$overview_dir)
     }, ignoreNULL = FALSE)
     overview_objects <- shiny::eventReactive(input$overview_refresh, {
-      .discover_merged_objects(input$overview_dir)
+      if (is.null(input$overview_dir) || !nzchar(input$overview_dir)) {
+        data.frame(group = character(), path = character(),
+                   stringsAsFactors = FALSE)
+      } else .discover_merged_objects(input$overview_dir)
     }, ignoreNULL = FALSE)
     selected_object <- shiny::reactive({
       objects <- overview_objects()
@@ -1372,14 +1518,23 @@ sparks_app <- function(...) {
                          choices = stats::setNames(objects$group, objects$group),
                          selected = if (nrow(objects)) objects$group[1L] else NULL)
     })
+    output$overview_reduction_choice <- shiny::renderUI({
+      object <- selected_object()
+      if (is.null(object) || !length(object@reductions)) return(NULL)
+      shiny::selectInput("overview_reduction", "Embedding",
+                         choices = names(object@reductions),
+                         selected = if ("umap" %in% names(object@reductions)) {
+                           "umap"
+                         } else names(object@reductions)[1L])
+    })
     output$overview_feature_choice <- shiny::renderUI({
       object <- selected_object()
       if (is.null(object)) return(shiny::helpText("No merged Seurat objects found."))
       features <- .explorer_features(object)
       shiny::selectizeInput("overview_feature", "Color by metadata or gene",
-                            choices = features,
-                            selected = if (length(features)) features[1L] else NULL,
-                            options = list(maxOptions = 1000L))
+                            choices = character(),
+                            options = list(maxOptions = 1000L,
+                                           placeholder = "Search metadata or gene"))
     })
     output$overview_split_choice <- shiny::renderUI({
       object <- selected_object()
@@ -1388,6 +1543,24 @@ sparks_app <- function(...) {
       shiny::selectInput("overview_split", "Split/group by metadata",
                          choices = c("None", metadata), selected = "None")
     })
+    shiny::observeEvent(selected_object(), {
+      object <- selected_object()
+      if (is.null(object)) return()
+      features <- .explorer_features(object)
+      genes <- rownames(object)
+      shiny::updateSelectizeInput(session, "overview_feature",
+        choices = features, selected = isolate(input$overview_feature),
+        server = TRUE)
+      shiny::updateSelectizeInput(session, "overview_gene",
+        choices = genes, selected = isolate(input$overview_gene),
+        server = TRUE)
+      shiny::updateSelectizeInput(session, "overview_gene_x",
+        choices = genes, selected = isolate(input$overview_gene_x),
+        server = TRUE)
+      shiny::updateSelectizeInput(session, "overview_gene_y",
+        choices = genes, selected = isolate(input$overview_gene_y),
+        server = TRUE)
+    }, ignoreInit = TRUE)
     overview_metrics <- shiny::reactive({
       .result_overview_metrics(overview_catalog())
     })
@@ -1410,12 +1583,22 @@ sparks_app <- function(...) {
       DT::datatable(data, options = list(pageLength = 15, scrollX = TRUE),
                     rownames = FALSE)
     })
+    output$qc_annotation_catalog <- DT::renderDT({
+      data <- overview_catalog()
+      keep <- grepl("(^|[/\\\\])(QC|SingleR|Annotation)([/\\\\]|$)|singleR|annotation",
+                    data$name, ignore.case = TRUE)
+      data <- data[keep, , drop = FALSE]
+      data$path <- NULL
+      DT::datatable(data, options = list(pageLength = 15, scrollX = TRUE),
+                    rownames = FALSE)
+    })
     plot_data <- shiny::reactive({
       object <- selected_object()
       shiny::req(object, input$overview_feature)
       group_by <- if (identical(input$overview_split, "None")) NULL else
         input$overview_split
-      .explorer_plot_data(object, input$overview_feature, group_by)
+      .explorer_plot_data(object, input$overview_feature, group_by,
+                          reduction = input$overview_reduction %||% "umap")
     })
     output$overview_umap_ui <- shiny::renderUI({
       if (requireNamespace("plotly", quietly = TRUE)) {
@@ -1444,19 +1627,97 @@ sparks_app <- function(...) {
       object <- selected_object()
       if (is.null(object)) return(shiny::helpText("Choose a comparison group first."))
       genes <- rownames(object)
-      shiny::selectizeInput("overview_gene", "Gene",
-                            choices = genes,
+      shiny::selectizeInput("overview_gene", "Gene", choices = character(),
                             options = list(maxOptions = 1000L,
                                            placeholder = "Search gene"))
     })
+    output$overview_coexpression_ui <- shiny::renderUI({
+      object <- selected_object()
+      if (is.null(object)) return(shiny::helpText("Choose a comparison group first."))
+      genes <- rownames(object)
+      shiny::tagList(
+        shiny::helpText("The table reports descriptive Spearman correlations by group; it does not run a hypothesis test."),
+        shiny::selectizeInput("overview_gene_x", "X-axis gene", choices = character(),
+                              options = list(maxOptions = 1000L,
+                                             placeholder = "Search gene")),
+        shiny::selectizeInput("overview_gene_y", "Y-axis gene", choices = character(),
+                              options = list(maxOptions = 1000L,
+                                             placeholder = "Search gene")),
+        shiny::uiOutput("overview_coexpression_plot_ui"),
+        DT::DTOutput("overview_coexpression_summary")
+      )
+    })
+    output$overview_coexpression_plot_ui <- shiny::renderUI({
+      if (requireNamespace("plotly", quietly = TRUE)) {
+        plotly::plotlyOutput("overview_coexpression_plotly", height = "500px")
+      } else {
+        shiny::plotOutput("overview_coexpression_plot", height = "500px")
+      }
+    })
+    coexpression_data <- shiny::reactive({
+      object <- selected_object()
+      shiny::req(object, input$overview_gene_x, input$overview_gene_y)
+      shiny::validate(shiny::need(
+        !identical(input$overview_gene_x, input$overview_gene_y),
+        "Choose two different genes to view co-expression."
+      ))
+      group_by <- if (identical(input$overview_split, "None")) NULL else
+        input$overview_split
+      .gene_coexpression_frame(object, input$overview_gene_x,
+                               input$overview_gene_y, group_by)
+    })
+    make_coexpression_plot <- function() {
+      data <- coexpression_data()
+      ggplot2::ggplot(data, ggplot2::aes(
+        x = expression_x, y = expression_y, color = group,
+        text = paste("Cell:", cell, "<br>Group:", group)
+      )) +
+        ggplot2::geom_point(alpha = 0.55, size = 0.8) +
+        ggplot2::labs(x = input$overview_gene_x, y = input$overview_gene_y,
+                      color = input$overview_split) +
+        ggplot2::theme_minimal()
+    }
+    output$overview_coexpression_plot <- shiny::renderPlot({
+      make_coexpression_plot()
+    })
+    if (requireNamespace("plotly", quietly = TRUE)) {
+      output$overview_coexpression_plotly <- plotly::renderPlotly({
+        plotly::ggplotly(make_coexpression_plot(), tooltip = c("text", "colour")) |>
+          plotly::config(displayModeBar = TRUE, scrollZoom = TRUE)
+      })
+    }
+    output$overview_coexpression_summary <- DT::renderDT({
+      data <- coexpression_data()
+      groups <- split(data, data$group)
+      summary <- do.call(rbind, lapply(names(groups), function(group) {
+        values <- groups[[group]]
+        data.frame(
+          Group = group,
+          Cells = nrow(values),
+          Spearman = if (sum(stats::complete.cases(values$expression_x,
+                                                   values$expression_y)) > 1L &&
+                        stats::sd(values$expression_x, na.rm = TRUE) > 0 &&
+                        stats::sd(values$expression_y, na.rm = TRUE) > 0) {
+            suppressWarnings(stats::cor(values$expression_x,
+                                        values$expression_y,
+                                        method = "spearman", use = "complete.obs"))
+          } else NA_real_,
+          stringsAsFactors = FALSE
+        )
+      }))
+      DT::datatable(summary, options = list(pageLength = 10, scrollX = TRUE),
+                    rownames = FALSE)
+    })
     make_umap_plot <- function(data) {
+      reduction <- input$overview_reduction %||% "umap"
       ggplot2::ggplot(data, ggplot2::aes(x, y, color = value, key = cell,
                                         frame = group,
                                         text = paste("Cell:", cell,
                                                      "<br>Value:", value,
                                                      "<br>Group:", group))) +
         ggplot2::geom_point(size = 0.35, alpha = 0.75) +
-        ggplot2::labs(x = "UMAP 1", y = "UMAP 2", color = input$overview_feature)
+        ggplot2::labs(x = paste(reduction, "1"), y = paste(reduction, "2"),
+                      color = input$overview_feature)
     }
     if (requireNamespace("plotly", quietly = TRUE)) {
       output$overview_umap_plot <- plotly::renderPlotly({
