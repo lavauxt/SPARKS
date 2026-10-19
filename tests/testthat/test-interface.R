@@ -111,6 +111,15 @@ test_that("QC and results reports render with summary and section order", {
   )
   output_dir <- tempfile("sparks-report-smoke-")
   dir.create(output_dir)
+  writeLines("Total cells: 12",
+             file.path(output_dir, "before_filtering_WT_s1_cell_counts.txt"))
+  writeLines("Total cells: 9",
+             file.path(output_dir, "after_filtering_WT_s1_cell_counts.txt"))
+  grDevices::png(file.path(output_dir,
+                           "VlnPlot_preFiltering_WT_s1.png"),
+                 width = 300, height = 200)
+  graphics::plot.new()
+  grDevices::dev.off()
   marker_dir <- file.path(output_dir, "fixture", "cluster", "DEG")
   dir.create(marker_dir, recursive = TRUE)
   utils::write.table(data.frame(
@@ -137,7 +146,10 @@ test_that("QC and results reports render with summary and section order", {
   expect_match(qc_html, "Report guide")
   expect_match(qc_html, "Cells after filtering")
   expect_match(qc_html, "Per-sample QC summary")
-  expect_match(qc_html, "Recorded pipeline stage counts")
+  expect_match(qc_html, "Filtering outcomes and sample-level diagnostics")
+  expect_match(qc_html, "Cell retention by sample")
+  expect_match(qc_html, "75")
+  expect_match(qc_html, "VlnPlot_preFiltering_WT_s1.png")
   expect_match(results_html, "Report guide")
   expect_match(results_html, "SingleR annotations")
   expect_match(results_html, "Marker results at a glance")

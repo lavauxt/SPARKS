@@ -219,37 +219,78 @@ if (length(qc_summary_cols) && !is.null(qc_group_col)) {
 }
 ```
 
-### Recorded pipeline stage counts
+### Filtering outcomes and sample-level diagnostics
 
 ```{r stage-counts, results='asis'}
-stage_files <- list.files(
-  out_dir, pattern = "^(before_SCT|after_clustering)_.*_cell_counts[.]txt$",
-  recursive = TRUE, full.names = TRUE
-)
-if (length(stage_files)) {
-  stage_counts <- lapply(stage_files, function(path) {
-    lines <- readLines(path, warn = FALSE)
-    total_line <- grep("^Total cells:", lines, value = TRUE)
-    if (!length(total_line)) return(NULL)
-    data.frame(
-      Stage = if (grepl("^before_SCT", basename(path))) "Before SCT" else
-        "After clustering",
-      File = basename(path),
-      Cells = suppressWarnings(as.integer(sub("^Total cells:[[:space:]]*", "",
-                                             total_line[1L]))),
-      stringsAsFactors = FALSE
-    )
-  })
-  stage_counts <- Filter(Negate(is.null), stage_counts)
-  if (length(stage_counts)) {
-    print(kable(do.call(rbind, stage_counts),
-                caption = "Cell counts at recorded pipeline stages",
-                row.names = FALSE))
-  } else {
-    cat("> No total-cell counts could be parsed from the stage files.\n")
+qc_roots <- unique(c(
+  out_dir,
+  file.path(dirname(dirname(out_dir)), "Sample_QC")
+))
+qc_roots <- qc_roots[dir.exists(qc_roots)]
+qc_files <- unique(c(
+  params$run_files,
+  unlist(lapply(qc_roots, list.files, recursive = TRUE, full.names = TRUE),
+         use.names = FALSE)
+))
+qc_files <- qc_files[!is.na(qc_files) & file.exists(qc_files)]
+count_files <- qc_files[grepl(
+  "^(before|after)_filtering_.*_cell_counts[.]txt$", basename(qc_files)
+)]
+
+read_total_cells <- function(path) {
+  lines <- readLines(path, warn = FALSE)
+  total <- grep("^Total cells:", lines, value = TRUE)
+  if (length(total)) {
+    return(suppressWarnings(as.integer(sub("^Total cells:[[:space:]]*", "",
+                                           total[[1L]]))))
+  }
+  if (any(grepl("No cells remaining", lines, fixed = TRUE))) return(0L)
+  NA_integer_
+}
+
+if (length(count_files)) {
+  count_data <- data.frame(
+    File = basename(count_files),
+    Cells = vapply(count_files, read_total_cells, integer(1)),
+    stringsAsFactors = FALSE
+  )
+  count_data$Stage <- ifelse(grepl("^before_filtering_", count_data$File),
+                             "Before cell filtering", "After QC and doublet removal")
+  count_data$Sample <- sub(
+    "^(before|after)_filtering_(.*)_cell_counts[.]txt$", "\\2",
+    count_data$File
+  )
+  count_wide <- tidyr::pivot_wider(
+    count_data[, c("Sample", "Stage", "Cells")],
+    names_from = "Stage", values_from = "Cells"
+  )
+  before_col <- "Before cell filtering"
+  after_col <- "After QC and doublet removal"
+  if (!before_col %in% names(count_wide)) count_wide[[before_col]] <- NA_integer_
+  if (!after_col %in% names(count_wide)) count_wide[[after_col]] <- NA_integer_
+  count_wide$Retained <- ifelse(
+    !is.na(count_wide[[before_col]]) & count_wide[[before_col]] > 0,
+    round(100 * count_wide[[after_col]] / count_wide[[before_col]], 1), NA_real_
+  )
+  names(count_wide)[names(count_wide) == "Retained"] <- "Retained cells (%)"
+  print(kable(count_wide, caption = "Cell retention by sample",
+              row.names = FALSE))
+} else {
+  cat("> Per-sample filtering counts are unavailable for this run.\n")
+}
+
+qc_plots <- qc_files[grepl(
+  "^(VlnPlot|FeatureScatter)_(preFiltering|postFiltering)_.*[.]png$",
+  basename(qc_files)
+)]
+if (length(qc_plots)) {
+  cat("\nPre-filtering and post-filtering QC plots are shown where available.\n")
+  for (plot_path in sort(qc_plots)) {
+    cat("\n**", basename(plot_path), "**\n\n", sep = "")
+    print(knitr::include_graphics(normalizePath(plot_path, winslash = "/")))
   }
 } else {
-  cat("> Pipeline stage count files are not available for this run.\n")
+  cat("> Per-sample pre/post-filtering plot files are not available.\n")
 }
 ```
 
@@ -307,6 +348,148 @@ if (all(c("nCount_RNA", "percent.mt", "nFeature_RNA") %in% scatter_features)) {
   .interactive_plot(p)
 } else {
   cat("Scatter plot metadata is not available.\n")
+}
+```
+
+### Alevin barcode-level diagnostics
+
+When Alevin's barcode-frequency and feature-dump files are available, these
+plots summarize barcode selection and per-barcode quantification. They are
+omitted for other input formats or when the relevant Alevin output files were
+not generated.
+
+```{r alevin-diagnostics, fig.width=10, fig.height=5, results='asis'}
+alevin_data <- NULL
+if (!is.null(cfg)) {
+  sample_table <- tryCatch(SPARKS::load_sample_table(cfg),
+                           error = function(e) NULL)
+  data_dir <- cfg$pipeline$data_dir %||% NULL
+  if (!is.null(sample_table) && !is.null(data_dir)) {
+    group_col <- if ("comparison_group" %in% names(sample_table)) {
+      sample_table$comparison_group == group
+    } else rep(FALSE, nrow(sample_table))
+    samples <- sample_table[group_col, , drop = FALSE]
+    loaded <- lapply(seq_len(nrow(samples)), function(i) {
+      sample <- samples[i, , drop = FALSE]
+      format <- if ("quant_format" %in% names(sample) &&
+                    !is.na(sample$quant_format[1L]) &&
+                    nzchar(sample$quant_format[1L])) {
+        as.character(sample$quant_format[1L])
+      } else cfg$input$format %||% "auto"
+      sample_dir <- file.path(data_dir, sample$folder_id[1L])
+      if (identical(format, "auto")) {
+        format <- tryCatch(SPARKS:::.detect_quant_format(sample_dir),
+                           error = function(e) NA_character_)
+      }
+      if (!identical(format, "alevin")) return(NULL)
+
+      alevin_dir <- file.path(sample_dir, "alevin")
+      frequency_file <- file.path(alevin_dir, "raw_cb_frequency.txt")
+      feature_file <- file.path(alevin_dir, "featureDump.txt")
+      if (!file.exists(frequency_file) || !file.exists(feature_file)) return(NULL)
+
+      frequency <- tryCatch(utils::read.delim(
+        frequency_file, header = FALSE, sep = "\t", stringsAsFactors = FALSE,
+        col.names = c("CB", "originalFreq"), comment.char = ""
+      ), error = function(e) NULL)
+      features <- tryCatch(utils::read.delim(
+        feature_file, header = TRUE, sep = "\t", stringsAsFactors = FALSE,
+        check.names = FALSE, comment.char = ""
+      ), error = function(e) NULL)
+      if (is.null(frequency) || is.null(features) ||
+          !"CB" %in% names(features)) return(NULL)
+
+      aliases <- c(MappingRate = "mappingRate", CorrectedReads = "collapsedFreq",
+                   DedupRate = "dedupRate", NumGenesOverMean = "nbrGenesAboveMean",
+                   MappedReads = "nbrMappedUMI",
+                   DeduplicatedReads = "totalUMICount",
+                   NumGenesExpressed = "nbrGenesAboveZero")
+      rename_from <- intersect(names(aliases), names(features))
+      names(features)[match(rename_from, names(features))] <- unname(aliases[rename_from])
+      keep <- intersect(c("CB", "collapsedFreq", "totalUMICount",
+                          "nbrGenesAboveZero", "mappingRate"), names(features))
+      merged <- merge(frequency, features[, keep, drop = FALSE], by = "CB")
+      if (!nrow(merged)) return(NULL)
+      merged$Sample <- paste(sample$protocol[1L], sample$folder_id[1L], sep = "_")
+      merged$ranking <- rank(-merged$originalFreq, ties.method = "first")
+      whitelist <- file.path(alevin_dir, "whitelist.txt")
+      merged$inWhitelist <- if (file.exists(whitelist)) {
+        whitelist_ids <- utils::read.delim(whitelist, header = FALSE,
+                                           stringsAsFactors = FALSE)[[1L]]
+        merged$CB %in% whitelist_ids
+      } else FALSE
+      merged
+    })
+    loaded <- Filter(Negate(is.null), loaded)
+    if (length(loaded)) alevin_data <- do.call(rbind, loaded)
+  }
+}
+
+if (is.null(alevin_data) || !nrow(alevin_data)) {
+  cat("> Alevin barcode-level output files are unavailable for this group.\n")
+} else {
+  freq_data <- alevin_data[is.finite(alevin_data$originalFreq) &
+                           alevin_data$originalFreq > 0, , drop = FALSE]
+  if (nrow(freq_data)) {
+    p <- ggplot(freq_data, aes(
+      ranking, originalFreq, color = inWhitelist,
+      text = paste("Sample:", Sample, "<br>Barcode rank:", ranking,
+                   "<br>Raw frequency:", originalFreq,
+                   "<br>In final whitelist:", inWhitelist)
+    )) +
+      geom_line() +
+      scale_x_log10() + scale_y_log10() +
+      facet_wrap(~ Sample, scales = "free") +
+      labs(title = "Raw barcode frequency rank",
+           x = "Barcode rank (log scale)", y = "Raw read frequency (log scale)",
+           color = "In whitelist") +
+      theme_minimal()
+    .interactive_plot(p)
+  }
+
+  if (all(c("collapsedFreq", "totalUMICount") %in% names(alevin_data))) {
+    quant_data <- alevin_data[
+      is.finite(alevin_data$collapsedFreq) & alevin_data$collapsedFreq > 0 &
+        is.finite(alevin_data$totalUMICount) & alevin_data$totalUMICount > 0,
+      , drop = FALSE
+    ]
+    if (nrow(quant_data)) {
+      p <- ggplot(quant_data, aes(
+        collapsedFreq, totalUMICount, color = inWhitelist,
+        text = paste("Sample:", Sample, "<br>Barcode frequency:", collapsedFreq,
+                     "<br>UMIs:", totalUMICount)
+      )) +
+        geom_point(alpha = 0.5, size = 0.7) +
+        facet_wrap(~ Sample, scales = "free") +
+        labs(title = "Barcode frequency and UMI quantification",
+             x = "Collapsed barcode frequency", y = "Total UMI count",
+             color = "In whitelist") +
+        theme_minimal()
+      .interactive_plot(p)
+    }
+  }
+
+  if (all(c("totalUMICount", "nbrGenesAboveZero") %in% names(alevin_data))) {
+    gene_data <- alevin_data[
+      is.finite(alevin_data$totalUMICount) & alevin_data$totalUMICount > 0 &
+        is.finite(alevin_data$nbrGenesAboveZero) &
+        alevin_data$nbrGenesAboveZero > 0, , drop = FALSE
+    ]
+    if (nrow(gene_data)) {
+      p <- ggplot(gene_data, aes(
+        totalUMICount, nbrGenesAboveZero, color = inWhitelist,
+        text = paste("Sample:", Sample, "<br>UMIs:", totalUMICount,
+                     "<br>Detected genes:", nbrGenesAboveZero)
+      )) +
+        geom_point(alpha = 0.5, size = 0.7) +
+        facet_wrap(~ Sample, scales = "free") +
+        labs(title = "Detected genes by barcode-level UMI count",
+             x = "Total UMI count", y = "Detected genes",
+             color = "In whitelist") +
+        theme_minimal()
+      .interactive_plot(p)
+    }
+  }
 }
 ```
 
