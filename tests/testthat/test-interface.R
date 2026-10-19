@@ -402,7 +402,8 @@ test_that("consolidated report embeds tabs, previews, and downloadable files", {
   report <- SPARKS::generate_all_results_report(results)
   expect_true(file.exists(report))
   html <- paste(readLines(report, warn = FALSE), collapse = "\n")
-  expect_match(html, "data-tab")
+  expect_match(html, "data-group")
+  expect_match(html, "data-section")
   expect_match(html, "counts.tsv")
   expect_match(html, "data:image/png;base64")
   expect_match(html, "data:text/csv;base64")
@@ -413,7 +414,7 @@ test_that("consolidated report embeds tabs, previews, and downloadable files", {
   expect_match(html, "<!DOCTYPE html>")
   expect_equal(length(gregexpr("<html", html, fixed = TRUE)[[1]]), 1L)
   expect_equal(length(gregexpr("</html>", html, fixed = TRUE)[[1]]), 1L)
-  expect_match(html, "if(tab)tab.classList.add('active')", fixed = TRUE)
+  expect_match(html, "if(p)p.classList.add('active')", fixed = TRUE)
   expect_false("SPARKS_all_results.html" %in% SPARKS::sparks_results(results)$name)
 })
 
@@ -430,6 +431,35 @@ test_that("consolidated report renders an empty result directory", {
   expect_match(html, "SPARKS — all results")
   expect_match(html, "<!DOCTYPE html>")
   expect_false(grepl("<button data-tab", html, fixed = TRUE))
+})
+
+test_that("consolidated report switches between group report pages", {
+  skip_if_not_installed("htmltools")
+  skip_if_not_installed("base64enc")
+  results <- tempfile("sparks-grouped-results-")
+  group_qc <- file.path(results, "group-a", "QC")
+  group_results <- file.path(results, "group-a")
+  dir.create(group_qc, recursive = TRUE)
+  writeLines("<html><body><h1>Group A QC</h1></body></html>",
+             file.path(group_qc, "QC_report_group-a.html"))
+  writeLines("<html><body><h1>Group A Results</h1></body></html>",
+             file.path(group_results, "Results_report_group-a.html"))
+  group_b_qc <- file.path(results, "group-b", "QC")
+  dir.create(group_b_qc, recursive = TRUE)
+  writeLines("<html><body><h1>Group B QC</h1></body></html>",
+             file.path(group_b_qc, "QC_report_group-b.html"))
+  on.exit(unlink(results, recursive = TRUE), add = TRUE)
+
+  report <- SPARKS::generate_all_results_report(results)
+  html <- paste(readLines(report, warn = FALSE), collapse = "\n")
+  expect_match(html, "group-a")
+  expect_match(html, "group-b")
+  expect_match(html, "QC_report_group-a.html")
+  expect_match(html, "Results_report_group-a.html")
+  expect_match(html, "Group A QC")
+  expect_match(html, "Group A Results")
+  expect_match(html, "group-page-1")
+  expect_match(html, "section-nav")
 })
 
 test_that("consolidated report rejects a directory output path", {

@@ -369,6 +369,16 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     message("   [SKIP HTML reports] Package 'rmarkdown' is not installed.")
   }
 
+  if (isTRUE(render_reports)) {
+    if (all(vapply(c("htmltools", "base64enc"), requireNamespace,
+                    quietly = TRUE, FUN.VALUE = logical(1)))) {
+      safe_run(generate_all_results_report(cfg$pipeline$results_dir),
+               label = "Consolidated report")
+    } else {
+      message("   [SKIP consolidated report] Packages 'htmltools' and 'base64enc' are required.")
+    }
+  }
+
   writeLines(utils::capture.output(utils::sessionInfo()),
              file.path(cfg$pipeline$results_dir, "session_info.txt"))
 

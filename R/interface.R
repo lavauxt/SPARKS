@@ -935,11 +935,9 @@ sparks_results <- function(results_dir) .result_catalog(results_dir)
       }))
     )
   }
-  tabs <- if (!nrow(catalog)) {
-    list(htmltools::tags$p("No result files were found."))
-  } else {
-    lapply(seq_len(nrow(catalog)), function(i) {
-      row <- catalog[i, ]
+  result_content <- if (!nrow(catalog)) list() else lapply(
+    seq_len(nrow(catalog)), function(i) {
+      row <- catalog[i, , drop = FALSE]
       ext <- tolower(tools::file_ext(row$path))
       download_link <- htmltools::tags$a("Download original",
                                         href = data_uri(row$path),
@@ -984,40 +982,120 @@ sparks_results <- function(results_dir) .result_catalog(results_dir)
       } else {
         htmltools::tags$p("Preview unavailable; use the download link.")
       }
-      htmltools::tags$section(
-        id = paste0("result-", i), class = "result",
+      list(
+        group = if (grepl("/", row$name, fixed = TRUE)) {
+          sub("/.*$", "", row$name)
+        } else "General",
+        name = row$name,
+        path = row$path,
+        type = row$type,
+        basename = basename(row$path),
+        content = htmltools::tags$section(
+        class = "result",
         htmltools::tags$h3(row$name),
         download_link,
         content
       )
+      )
+    }
+  )
+  groups <- if (length(result_content)) {
+    unique(vapply(result_content, `[[`, character(1), "group"))
+  } else character()
+  group_pages <- lapply(seq_along(groups), function(group_index) {
+    group <- groups[[group_index]]
+    items <- Filter(function(item) identical(item$group, group), result_content)
+    qc_reports <- Filter(function(item) grepl("^QC_report_", item$basename), items)
+    analysis_reports <- Filter(function(item) {
+      grepl("^Results_report_", item$basename)
+    }, items)
+    regular_files <- Filter(function(item) {
+      !item$type %in% "Report" ||
+        (!grepl("^QC_report_", item$basename) &&
+         !grepl("^Results_report_", item$basename))
+    }, items)
+    sections <- list(
+      Overview = htmltools::tags$div(
+        htmltools::tags$p("Results and reports for ", htmltools::tags$strong(group), "."),
+        htmltools::tags$ul(lapply(c(
+          paste(length(qc_reports), "QC report(s)"),
+          paste(length(analysis_reports), "analysis report(s)"),
+          paste(length(regular_files), "other result file(s)")
+        ), htmltools::tags$li))
+      ),
+      QC = if (length(qc_reports)) lapply(qc_reports, function(item) {
+        htmltools::tags$section(
+          htmltools::tags$h3(item$name),
+          htmltools::tags$iframe(
+            srcdoc = paste(readLines(item$path, warn = FALSE), collapse = "\n"),
+            title = item$name,
+            style = "width:100%;height:80vh;border:1px solid #ddd"
+          )
+        )
+      }) else htmltools::tags$p("No QC report is available for this group."),
+      Results = if (length(analysis_reports)) lapply(analysis_reports,
+        function(item) htmltools::tags$section(
+          htmltools::tags$h3(item$name),
+          htmltools::tags$iframe(
+            srcdoc = paste(readLines(item$path, warn = FALSE), collapse = "\n"),
+            title = item$name,
+            style = "width:100%;height:80vh;border:1px solid #ddd"
+          )
+        )) else htmltools::tags$p(
+          "No analysis report is available for this group."
+        ),
+      Files = if (length(regular_files)) lapply(regular_files, `[[`, "content")
+        else htmltools::tags$p("No additional result files are available.")
+    )
+    section_ids <- paste0("group-", group_index, "-section-", seq_along(sections))
+    section_nav <- htmltools::tags$nav(
+      class = "section-nav",
+      lapply(seq_along(sections), function(section_index) {
+        htmltools::tags$button(names(sections)[section_index],
+          `data-section` = section_ids[section_index],
+          class = if (section_index == 1L) "active" else NULL
+        )
+      })
+    )
+    section_panels <- lapply(seq_along(sections), function(section_index) {
+      htmltools::tags$section(
+        id = section_ids[section_index],
+        class = if (section_index == 1L) "section-page active" else "section-page",
+        sections[[section_index]]
+      )
     })
-  }
+    htmltools::tags$section(
+      id = paste0("group-page-", group_index),
+      class = if (group_index == 1L) "group-page active" else "group-page",
+      htmltools::tags$h2(group), section_nav, section_panels
+    )
+  })
   head <- htmltools::tagList(
       htmltools::tags$meta(charset = "utf-8"),
       htmltools::tags$title("SPARKS results"),
       htmltools::tags$style(htmltools::HTML(
-        "body{font-family:system-ui;margin:2rem}nav{display:flex;gap:.5rem;flex-wrap:wrap}.result{border-top:1px solid #ddd;padding:1rem 0}.table-filter{margin:1rem 0}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.3rem}.result-tab{display:none}.result-tab.active{display:block}nav button{cursor:pointer}"
+        "body{font-family:system-ui;margin:2rem;color:#222}nav{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}.group-nav{border-bottom:1px solid #bbb;padding-bottom:.75rem}.section-nav button{background:#f2f4f7}.group-nav button,.section-nav button{border:1px solid #bbb;border-radius:.3rem;padding:.5rem .8rem;cursor:pointer}.group-nav button.active,.section-nav button.active{background:#245b8f;color:white}.group-page,.section-page{display:none}.group-page.active,.section-page.active{display:block}.result{border-top:1px solid #ddd;padding:1rem 0}.table-filter{margin:1rem 0}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.3rem}"
       )),
       htmltools::tags$script(htmltools::HTML(
-        "document.addEventListener('click',e=>{if(e.target.matches('[data-tab]')){document.querySelectorAll('.result-tab').forEach(x=>x.classList.remove('active'));let tab=document.getElementById(e.target.dataset.tab);if(tab)tab.classList.add('active')}});document.addEventListener('input',e=>{if(e.target.matches('.table-filter')){let q=e.target.value.toLowerCase(),t=e.target.parentElement.querySelector('table');if(t)[...t.tBodies[0].rows].forEach(r=>r.hidden=!r.innerText.toLowerCase().includes(q))}});"
+        "document.addEventListener('click',e=>{let b=e.target.closest('[data-group]');if(b){document.querySelectorAll('.group-page').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.group-nav button').forEach(x=>x.classList.remove('active'));let p=document.getElementById(b.dataset.group);if(p)p.classList.add('active');b.classList.add('active')}let s=e.target.closest('[data-section]');if(s){let p=s.closest('.group-page');p.querySelectorAll('.section-page').forEach(x=>x.classList.remove('active'));p.querySelectorAll('.section-nav button').forEach(x=>x.classList.remove('active'));let page=document.getElementById(s.dataset.section);if(page)page.classList.add('active');s.classList.add('active')}});document.addEventListener('input',e=>{if(e.target.matches('.table-filter')){let q=e.target.value.toLowerCase(),t=e.target.parentElement.querySelector('table');if(t)[...t.tBodies[0].rows].forEach(r=>r.hidden=!r.innerText.toLowerCase().includes(q))}});"
       ))
   )
   body <- htmltools::tags$body(
       htmltools::tags$h1("SPARKS — all results"),
-      htmltools::tags$p("Each catalogued output is embedded below with an original-file download. Tabular previews show up to 1,000 rows; large result collections can make this document large."),
-      if (nrow(catalog)) {
+      htmltools::tags$p("A single report for all comparison groups. Use the group tabs, then switch between overview, QC, analysis, and result files."),
+      if (length(groups)) {
         htmltools::tagList(
-          htmltools::tags$nav(lapply(seq_len(nrow(catalog)), function(i)
-            htmltools::tags$button(catalog$name[i],
-                                   `data-tab` = paste0("result-", i)))),
-          lapply(seq_len(nrow(catalog)), function(i) {
-            tab <- tabs[[i]]
-            tab$attribs$class <- if (i == 1L) "result-tab active" else
-              "result-tab"
-            tab
-          })
+          htmltools::tags$nav(class = "group-nav",
+            lapply(seq_along(groups), function(i) {
+              htmltools::tags$button(groups[[i]],
+                `data-group` = paste0("group-page-", i),
+                class = if (i == 1L) "active" else NULL
+              )
+            })
+          ),
+          group_pages
         )
-      } else tabs
+      } else htmltools::tags$p("No result files were found.")
     )
   head_html <- htmltools::renderTags(head)$html
   body_html <- htmltools::renderTags(body)$html
