@@ -111,8 +111,14 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
                                  results_dir, package_path = NULL) {
   deparse_one <- function(x) paste(deparse(x), collapse = "")
   package_loader <- if (is.null(package_path)) "" else paste0(
-    "if (!requireNamespace('SPARKS', quietly = TRUE)) ",
-    "pkgload::load_all(", deparse_one(package_path), ", quiet = TRUE)\n"
+    "if (file.exists(file.path(", deparse_one(package_path),
+    ", 'R', 'interface.R'))) {\n",
+    "  if (!requireNamespace('pkgload', quietly = TRUE)) ",
+    "    stop('Package \\\"pkgload\\\" is required to run the development targets workflow.')\n",
+    "  pkgload::load_all(", deparse_one(package_path), ", quiet = TRUE)\n",
+    "} else if (!requireNamespace('SPARKS', quietly = TRUE)) {\n",
+    "  stop('Package \\\"SPARKS\\\" is not installed for this targets workflow.')\n",
+    "}\n"
   )
   paste0(
     package_loader,

@@ -657,9 +657,38 @@ test_that("targets plan separates sample, group, report, and manifest stages", {
   expect_true(all(c("sample_input_00001", "sample_input_00002") %in% names))
   expect_true(all(c("analysis_config", "reports_g1") %in% names))
   script <- file.path(fixture, "_targets.R")
-  targets::tar_script(plan, script = script, ask = FALSE)
+  package_path <- getNamespaceInfo(asNamespace("SPARKS"), "path")
+  writeLines(SPARKS:::.targets_plan_script(base, override,
+                                          file.path(fixture, "results"),
+                                          package_path), script)
+  manifest <- targets::tar_manifest(script = script)
+  expect_true(all(c("sample_00001", "group_g1", "results_manifest") %in%
+                    manifest$name))
   expect_no_error(targets::tar_validate(callr_function = NULL, script = script,
                                        store = file.path(fixture, "store")))
+})
+
+test_that("generated targets script loads the source package in development", {
+  skip_if_not_installed("targets")
+  fixture <- tempfile("targets-script-")
+  dir.create(fixture)
+  base <- testthat::test_path("..", "..", "inst",
+                              "config_template_mouse.yaml")
+  override <- file.path(fixture, "override.yaml")
+  writeLines(c("pipeline:", "  sample_table:", "    - folder_id: s1",
+               "      protocol: control", "      comparison_group: g1"),
+             override)
+  script <- file.path(fixture, "_targets.R")
+  package_path <- getNamespaceInfo(asNamespace("SPARKS"), "path")
+  writeLines(SPARKS:::.targets_plan_script(base, override,
+                                          file.path(fixture, "results"),
+                                          package_path), script)
+  on.exit(unlink(fixture, recursive = TRUE), add = TRUE)
+
+  expect_false(any(grepl("empty pipeline", capture.output(
+    manifest <- targets::tar_manifest(script = script)
+  ), fixed = TRUE)))
+  expect_true("results_manifest" %in% manifest$name)
 })
 
 test_that("targets plan rejects report target name collisions", {
