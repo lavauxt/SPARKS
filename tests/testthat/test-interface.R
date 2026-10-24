@@ -475,6 +475,25 @@ test_that("consolidated report rejects a directory output path", {
                "points to a directory")
 })
 
+test_that("consolidated report avoids embedding large files and itself", {
+  skip_if_not_installed("htmltools")
+  skip_if_not_installed("base64enc")
+  results <- tempfile("sparks-report-size-")
+  dir.create(results)
+  large_file <- file.path(results, "large.bin")
+  writeBin(as.raw(rep(1L, 1024^2 + 1L)), large_file)
+  custom_report <- file.path(results, "custom", "report.html")
+  on.exit(unlink(results, recursive = TRUE), add = TRUE)
+
+  first <- SPARKS::generate_all_results_report(results, custom_report)
+  second <- SPARKS::generate_all_results_report(results, custom_report)
+  html <- paste(readLines(second, warn = FALSE), collapse = "\n")
+  expect_identical(first, second)
+  expect_match(html, "large.bin")
+  expect_false(grepl("application/octet-stream;base64", html, fixed = TRUE))
+  expect_false(grepl("custom/report.html", html, fixed = TRUE))
+})
+
 test_that("sample table source resolves paths relative to override config", {
   config_dir <- tempfile("sparks-config-")
   dir.create(config_dir)

@@ -903,7 +903,8 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
 #' @export
 sparks_results <- function(results_dir) .result_catalog(results_dir)
 
-.write_consolidated_report <- function(results_dir, dependencies = NULL) {
+.write_consolidated_report <- function(results_dir, dependencies = NULL,
+                                       output_file = NULL) {
   invisible(dependencies)
   for (pkg in c("htmltools", "base64enc")) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
@@ -911,8 +912,27 @@ sparks_results <- function(results_dir) .result_catalog(results_dir)
            "'. Install it with install.packages('", pkg, "').", call. = FALSE)
     }
   }
+  if (is.null(output_file)) {
+    output_file <- file.path(results_dir, "SPARKS_all_results.html")
+  }
+  if (dir.exists(output_file)) {
+    stop("output_file points to a directory: ", output_file, call. = FALSE)
+  }
+  make_dir(dirname(output_file))
+  output <- normalizePath(output_file, winslash = "/", mustWork = FALSE)
   catalog <- .result_catalog(results_dir)
-  output <- file.path(results_dir, "SPARKS_all_results.html")
+  catalog_paths <- normalizePath(catalog$path, winslash = "/", mustWork = FALSE)
+  catalog <- catalog[catalog_paths != output, , drop = FALSE]
+  max_embedded_bytes <- 1024^2
+  relative_href <- function(path) {
+    tryCatch(.report_file_href(path, dirname(output)), error = function(e) NULL)
+  }
+  file_href <- function(path, size, embed = TRUE) {
+    if (isTRUE(embed) && is.finite(size) && size <= max_embedded_bytes) {
+      return(data_uri(path))
+    }
+    relative_href(path)
+  }
   data_uri <- function(path) {
     ext <- tolower(tools::file_ext(path))
     mime <- switch(ext, png = "image/png", jpg = "image/jpeg", jpeg = "image/jpeg",
@@ -939,11 +959,16 @@ sparks_results <- function(results_dir) .result_catalog(results_dir)
     seq_len(nrow(catalog)), function(i) {
       row <- catalog[i, , drop = FALSE]
       ext <- tolower(tools::file_ext(row$path))
-      download_link <- htmltools::tags$a("Download original",
-                                        href = data_uri(row$path),
-                                        download = basename(row$path))
+      href <- file_href(row$path, row$size,
+                        embed = !ext %in% c("html", "htm"))
+      download_link <- if (is.null(href)) {
+        htmltools::tags$span("Download unavailable outside the report's filesystem root.")
+      } else {
+        htmltools::tags$a("Download original", href = href,
+                          download = basename(row$path))
+      }
       content <- if (ext %in% c("png", "jpg", "jpeg", "gif", "webp", "svg")) {
-        htmltools::tags$img(src = data_uri(row$path),
+        htmltools::tags$img(src = file_href(row$path, row$size),
                             style = "max-width:100%;height:auto")
       } else if (ext %in% c("csv", "tsv", "txt")) {
         header <- tryCatch(readLines(row$path, n = 1L, warn = FALSE),
@@ -964,14 +989,18 @@ sparks_results <- function(results_dir) .result_catalog(results_dir)
         } else {
           csv_path <- tempfile(fileext = ".csv")
           utils::write.csv(tab, csv_path, row.names = FALSE, na = "")
-          csv_uri <- data_uri(csv_path)
+          csv_uri <- if (file.info(csv_path)$size <= max_embedded_bytes) {
+            data_uri(csv_path)
+          } else NULL
           unlink(csv_path)
           htmltools::tags$div(
             htmltools::tags$input(type = "search", class = "table-filter",
                                   placeholder = "Filter rows"),
-            htmltools::tags$a("Download preview as CSV", href = csv_uri,
-                              download = paste0(tools::file_path_sans_ext(
-                                basename(row$path)), ".csv")),
+            if (!is.null(csv_uri)) htmltools::tags$a(
+              "Download preview as CSV", href = csv_uri,
+              download = paste0(tools::file_path_sans_ext(
+                basename(row$path)), ".csv")
+            ),
             html_table(tab)
           )
         }
@@ -1114,20 +1143,7 @@ sparks_results <- function(results_dir) .result_catalog(results_dir)
 generate_all_results_report <- function(results_dir,
                                         output_file = file.path(results_dir,
                                                                "SPARKS_all_results.html")) {
-  path <- .write_consolidated_report(results_dir)
-  if (!identical(normalizePath(output_file, winslash = "/", mustWork = FALSE),
-                 path)) {
-    make_dir(dirname(output_file))
-    if (dir.exists(output_file)) {
-      stop("output_file points to a directory: ", output_file, call. = FALSE)
-    }
-    if (!file.copy(path, output_file, overwrite = TRUE)) {
-      stop("Unable to copy consolidated report to: ", output_file,
-           call. = FALSE)
-    }
-    path <- normalizePath(output_file, winslash = "/", mustWork = TRUE)
-  }
-  path
+  .write_consolidated_report(results_dir, output_file = output_file)
 }
 
 #' Launch the SPARKS Shiny interface
