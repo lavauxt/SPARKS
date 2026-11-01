@@ -7,7 +7,8 @@
 #' the pipeline relies on it so that an empty list in a config file falls back
 #' to the default. Keep the difference in mind if you attach SPARKS together
 #' with one of those packages.
-#' @name %||%
+#' @name null-default
+#' @aliases %||%
 #' @param lhs Left hand side
 #' @param rhs Right hand side
 #' @export

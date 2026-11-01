@@ -29,6 +29,8 @@ Species currently supported: **Human** and **Mouse**.
 - **Pathway Analysis**: Optional per-cell pathway scoring with `escape`, plus ranked MSigDB Hallmark GSEA from replicate-level edgeR pseudobulk statistics.
 - **Advanced Scoring**: Built-in modules for sex scoring and cell cycle regression.
 - **Subset Analysis**: Targeted re-clustering and analysis for specific cell populations defined in the config.
+- **One dynamic HTML report**: `SPARKS_all_results.html` gathers every result of a run (QC, embeddings, genes, markers and DE, enrichment, composition, all tables, all figures, run log) in tabs with interactive plotly figures. It is a single self-contained file that works offline.
+- **Loupe-style explorer**: a Shiny app (`sparks_explorer()`) where you lasso cells on the embedding and re-run differential expression, re-clustering, signature scoring and over-representation analysis on the fly. Analyses are cached [targets](https://docs.ropensci.org/targets/), so asking the same question twice is instant and the history survives restarts.
 
 ## Installation
 
@@ -38,8 +40,9 @@ You can install the development version of SPARKS from GitHub:
 # Install devtools if not already installed
 if (!require("devtools", quietly = TRUE)) install.packages("devtools")
 
-# Install SPARKS (dependencies = TRUE also pulls in the optional report
-# packages: rmarkdown, knitr, DT, plotly, htmltools, RColorBrewer)
+# Install SPARKS (dependencies = TRUE also pulls in the optional report and
+# app packages: rmarkdown, knitr, DT, plotly, htmltools, base64enc, shiny,
+# bslib, targets, callr, RColorBrewer)
 devtools::install_github("lavauxt/SPARKS", dependencies = TRUE)
 ```
 
@@ -54,6 +57,145 @@ devtools::install_github("lavauxt/SPARKS", dependencies = TRUE)
 > The `.Rmd` templates ship inside the installed package (`inst/rmd/`) and
 > are located automatically — you no longer need to copy `qc_report.Rmd` /
 > `results_report.Rmd` next to your config file for reports to generate.
+
+## Try it without data
+
+`sparks_demo_results()` writes a small synthetic results folder with the same
+layout, file names and columns as a real run (three planted populations, four
+samples, WT/KO conditions). The report flags it with a "Synthetic demo data"
+badge.
+
+```r
+library(SPARKS)
+demo <- tempfile("sparks_demo_")
+sparks_demo_results(demo)
+
+sparks_report(demo)      # writes <demo>/SPARKS_all_results.html
+sparks_explorer(demo)    # opens the Shiny explorer on the same results
+```
+
+## The unified HTML report
+
+After every run (`sparks()` or the targets workflow) SPARKS writes
+`<results_dir>/SPARKS_all_results.html`. You can also (re)build it at any time
+from any results folder:
+
+```r
+sparks_report("results")                                   # defaults
+sparks_report("results", max_cells = 50000, embed_images = FALSE)
+```
+
+It is **one file with no server and no network dependency**: plotly.js is
+inlined once, the data are embedded as JSON and each tab is drawn when you first
+open it. Send it to a collaborator or open it from a shared drive.
+
+| Tab | What it shows |
+| :-- | :------------ |
+| **Overview** | Headline numbers (cells, samples, genes, clusters, tables, files), overview figures, top markers per cluster, run details and jump links to the other tabs. |
+| **QC** | Cells kept per filtering stage and sample, doublet statistics, QC figures. |
+| **Embedding** | UMAP/t-SNE coloured by any metadata column or embedded gene. Lasso or box-select cells to get their composition, the genes higher in the selection, and the barcodes (download, copy, clear). Legend click toggles groups. |
+| **Genes** | Violin and dot plots for the embedded genes, grouped by any categorical column. |
+| **Markers & DE** | Cluster markers and DE tables with a live volcano plot (change the log2FC and adjusted p-value thresholds in the page). |
+| **Enrichment** | GSEA and `escape` results. |
+| **Composition** | Cell proportions per sample / condition and proportion tests. |
+| **Tables** | Every result table of the run: sortable, filterable, CSV export. |
+| **Figures** | The pipeline's PNG/SVG figures as a gallery with a lightbox. |
+| **Files** | Index of every output file, and links to the per-comparison QC / Results reports. |
+| **Run** | Configuration used, warnings, session info, log tail. |
+
+Light, dark and automatic themes are available (button in the header), tabs are
+keyboard-accessible and the URL hash remembers the open tab.
+
+**Size and content are configurable** with arguments of `sparks_report()` or with
+an optional `report:` block in the pipeline configuration (see the config
+templates):
+
+```yaml
+report:
+  title:           ~       # default: "SPARKS report - <results folder>"
+  max_cells:       20000   # cells drawn in the embedding (random, seeded)
+  max_genes:       60      # genes embedded for violin / dot plots
+  max_table_rows:  3000    # rows kept per table in the report (files on disk are never truncated)
+  embed_images:    true    # inline pipeline figures
+  image_budget_mb: 25      # total size of inlined figures
+  max_image_mb:    1.5     # largest single inlined figure
+```
+
+Notes:
+
+* The report shows a **down-sampled panel** (`sparks_panel()`) of each merged
+  Seurat object. Anything that needs the full data (DE on an arbitrary
+  selection, re-clustering, any gene) is what the explorer is for.
+* Palettes follow a fixed categorical order and are validated for colour-vision
+  deficiency; with more than 8 categories the colours repeat as lighter tints
+  and groups are labelled directly on the embedding.
+* If `plotly`, `jsonlite`, `htmltools` or `base64enc` are missing, the pipeline
+  falls back to the older static consolidated page and says so in the log.
+* `generate_all_results_report()` now writes this same unified report.
+
+## The explorer: a Loupe-style Shiny app
+
+```r
+sparks_explorer("results")                              # pick a dataset in the app
+sparks_explorer("results", object = "results/Group_1/RData/Merged_Group_1.rds")
+```
+
+The explorer is also available as the **Explorer** page of `sparks_app()`, and
+as a Shiny module (`sparks_explorer_ui()` / `sparks_explorer_server()`) to embed
+in your own app.
+
+What you can do:
+
+1. **Look**: choose the dataset and reduction, colour by any metadata column
+   *or any gene*, change point size and opacity.
+2. **Select**: lasso/box-select on the embedding, paste or upload barcodes, or
+   save a selection as a named **category** (it then becomes a colour-by column).
+3. **Ask a question** about the selection, on the fly:
+   * **Differential expression** of the selection against everything else or
+     against another saved category (Wilcoxon, with `min_pct` and log2FC
+     thresholds).
+   * **Re-cluster** the selection (normalise, PCA, clusters, UMAP, optional
+     markers); apply the new clusters as a colour-by column.
+   * **Signature scoring**: score a gene list per cell (module score, or mean
+     z-score as fallback); signatures from your configuration or a pasted list.
+   * **Over-representation** of the up-regulated genes of a DE result in your
+     configured signatures or a GMT file.
+4. **Keep and share**: every analysis is listed in a history (status, run time,
+   errors), can be reopened, downloaded as CSV, and is included in the report
+   when you click **Build unified report**.
+
+### How it uses targets
+
+Interactive analyses are targets, in their **own store**
+`<results_dir>/_targets_interactive/` so exploring never invalidates, or races
+with, the production pipeline in `<results_dir>/_targets/`.
+
+* An analysis is described by `sparks_spec()`; its id is a **content hash** of
+  the parameters and the object it runs on.
+* All analyses depend on one file target, the merged Seurat object: asking the
+  same question twice is a cache hit, and replacing the object invalidates
+  every analysis built from it.
+* A failed analysis is recorded (`error = "continue"`) and shown in the history
+  without blocking the others. Like any failed target it is retried by the next
+  run; delete it from the history once you no longer want it.
+* With SPARKS **installed** (not only loaded with `devtools::load_all()`) and
+  `callr` available, analyses run in a background R process so the app stays
+  responsive; otherwise they run in the app's own process.
+
+The same machinery is available from scripts:
+
+```r
+spec <- sparks_spec("de", cells_a = my_barcodes, label = "Region A vs rest")
+sparks_interactive_submit("results", spec, object_path)
+sparks_interactive_run("results", object_path)       # builds only what is not cached
+sparks_interactive_status("results")                 # id, type, label, status, seconds
+res <- sparks_interactive_result("results", sparks_interactive_status("results")$id[1])
+res$table
+```
+
+Other building blocks are exported too: `sparks_read_results()` (index a results
+folder), `sparks_table()`, `sparks_panel()`, the plotly figure builders
+(`sparks_fig_*()`), `sparks_read_gmt()` and `sparks_read_barcodes()`.
 
 ## Quick Start
 
@@ -83,14 +225,13 @@ SPARKS runs from writing to the same results directory.
 The **Overview** page summarizes output files by group/type and, for saved
 merged Seurat objects, provides a UMAP explorer colored by metadata or selected
 gene expression. Install optional package `plotly` for hover and lasso selection;
-metadata-selected cells can be downloaded as TSV. This is a lightweight
-exploration view, not a full replacement for 10x Genomics Loupe Browser.
+metadata-selected cells can be downloaded as TSV. The **Explorer** page opens a
+results folder in the full [explorer](#the-explorer-a-loupe-style-shiny-app)
+(selection, on-the-fly DE, re-clustering, signature scoring, enrichment).
 
-The workflow also creates `SPARKS_all_results.html`, a portable, tabbed HTML
-catalog with embedded result files, plot previews, searchable table previews,
-and individual original-file downloads. Large result sets may make this HTML
-document large; large serialized objects are downloadable but are not previewed.
-The Shiny results browser also supports exporting tabular results as CSV or TSV.
+The workflow also creates `SPARKS_all_results.html`, the
+[unified interactive report](#the-unified-html-report). The Shiny results browser
+also supports exporting tabular results as CSV or TSV.
 
 ```r
 SPARKS::run_sparks_targets(
@@ -239,16 +380,6 @@ Directs automated expression tracing visualization outputs and coordinate matrix
     corr_genes_x: ["S1pr1", "S1pr2"] # Coordinate factors driving expression correlation matrices
     corr_genes_y: ["Ccl19", "Cxcl13"]
 ```
-*  Directs automated expression tracing visualization outputs and coordinate matrix calculations.
-```
-  genes:
-    genes_to_plot:                  # Global registry driving FeaturePlot/Violin generation
-      - "Sphk1"
-      - "Cd19"
-      - "Cd3e"
-    corr_genes_x: ["S1pr1", "S1pr2"] # Coordinate factors driving expression correlation matrices
-    corr_genes_y: ["Ccl19", "Cxcl13"]
-```
 *  Gene Signature Panels (gene_signatures)
 Named gene lists that get a dedicated per-cell z-score heatmap, an averaged
 z-score heatmap, and a DotPlot (average expression + percent expressed)
@@ -291,6 +422,17 @@ re-clustering, and sub-population profiling.
       genes: ["Ccl19", "Cxcl13"]         # Subpopulation targeted gene expression tracking set
       label_rules: []                    # Optional rule modifiers
 ```
+*  Interactive Report (report)
+Optional. Sizes the unified HTML report; every key has a default (see
+[The unified HTML report](#the-unified-html-report)).
+```
+  report:
+    max_cells: 20000                # cells drawn in the interactive embedding
+    max_genes: 60                   # genes embedded for violin / dot plots
+    max_table_rows: 3000            # rows kept per table in the report
+    embed_images: true              # inline the pipeline's figures
+```
+
 ## Differential expression and pathway analysis
 
 The default `deg$run: true` retains the existing cell-level Seurat Wilcoxon
@@ -330,6 +472,10 @@ mistaken for current-run results.
 The pipeline generates an organized results directory:
 ```
 results_dir/
+  ├── SPARKS_all_results.html                # Unified interactive report (all tabs)
+  ├── config_used.yaml                       # Configuration the run used (also read by the report)
+  ├── _targets/                              # Resumable pipeline store (targets workflow)
+  ├── _targets_interactive/                  # Cached explorer analyses (specs + store)
   └── Group_1/
       ├── QC/
       │   ├── VlnPlot_Group_1.png            # Ingestion profile distributions
@@ -359,6 +505,25 @@ results_dir/
       └── RData/
           └── Group_1_Seurat_Processed.rds   # Production-ready Seurat binary object file
 ```
+
+## Tests
+
+```r
+devtools::test()                       # or testthat::test_local()
+```
+
+The suite covers the results index, the plotly figure builders, the report
+(self-contained, valid JSON data block, one copy of plotly.js, capped tables,
+embedded images, fallback), the on-the-fly analyses and their targets store
+(caching, error capture, history across sessions) and the explorer's server
+logic (`shiny::testServer`). It runs on the synthetic data of
+`sparks_demo_results()`, so it needs no dataset; tests skip when an optional
+package (Seurat, plotly, targets, ...) or `node` (JavaScript syntax check) is
+not installed. A browser smoke test of the report and the explorer with
+Playwright is in `tests/browser/`.
+
+The full pipeline (`sparks()`) is not exercised by the unit tests: it needs the
+reference data and the Bioconductor stack and is run on your own data.
 
 ## License
 

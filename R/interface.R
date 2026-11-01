@@ -570,7 +570,7 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
     )
   }
   report_command <- substitute(
-    { invisible(REPORTS); SPARKS:::.write_consolidated_report(results_dir) },
+    { invisible(REPORTS); SPARKS:::.write_unified_report(results_dir) },
     list(REPORTS = as.call(c(list(as.name("c")),
                              lapply(report_targets, as.name))))
   )
@@ -853,6 +853,7 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
 .sparks_nav_labels <- c(
   run = "Run",
   explore = "Explore",
+  explorer = "Explorer",
   qc = "QC & annotation",
   results = "Results",
   reports = "Reports"
@@ -1143,7 +1144,7 @@ sparks_results <- function(results_dir) .result_catalog(results_dir)
 generate_all_results_report <- function(results_dir,
                                         output_file = file.path(results_dir,
                                                                "SPARKS_all_results.html")) {
-  .write_consolidated_report(results_dir, output_file = output_file)
+  .write_unified_report(results_dir, output_file = output_file)
 }
 
 #' Launch the SPARKS Shiny interface
@@ -1250,6 +1251,13 @@ sparks_app <- function(...) {
           )
         )
       ),
+    bslib::nav_panel(.sparks_nav_labels[["explorer"]],
+      shiny::div(class = "d-flex flex-wrap gap-2 align-items-end mb-2",
+        shiny::textInput("explorer_dir", "Results directory", "results", width = "420px"),
+        shiny::actionButton("explorer_open", "Open in explorer", class = "btn-primary")),
+      shiny::tags$style(.xp_css),
+      shiny::uiOutput("explorer_host")
+    ),
     bslib::nav_panel(.sparks_nav_labels[["qc"]],
       bslib::card(
         bslib::card_header("Quality control and cell annotation outputs"),
@@ -2000,6 +2008,25 @@ sparks_app <- function(...) {
                            row.names = FALSE, na = "")
       }
     )
+
+    # Loupe-style explorer: a fresh module instance per opened directory.
+    explorer_count <- 0L
+    shiny::observeEvent(input$explorer_open, {
+      dir <- input$explorer_dir
+      if (is.null(dir) || !dir.exists(dir)) {
+        shiny::showNotification("Choose an existing results directory.", type = "error")
+        return()
+      }
+      if (!nrow(.discover_result_objects(sparks_read_results(dir)))) {
+        shiny::showNotification("No merged Seurat objects (RData/Merged_*.rds) found in that directory.",
+                                type = "warning")
+        return()
+      }
+      explorer_count <<- explorer_count + 1L
+      id <- paste0("explorer", explorer_count)
+      output$explorer_host <- shiny::renderUI(sparks_explorer_ui(id))
+      sparks_explorer_server(id, results_dir = dir)
+    })
   }
   shiny::shinyApp(ui, server, ...)
 }

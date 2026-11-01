@@ -32,6 +32,20 @@ input:
   save_raw_matrix:    true
   raw_matrix_format:  "mtx"     # mtx | h5 -> results_dir/<comparison_group>/RawMatrix/<folder_id>/
 
+# -- Unified HTML report & explorer ----------------------------------------------
+# One self-contained file (SPARKS_all_results.html) with every result in tabs and
+# plotly figures. Optional: all keys have defaults. Raise max_cells for a
+# denser UMAP, lower it (or set embed_images: false) to shrink the file.
+# The same data feed sparks_explorer(), the Loupe-style Shiny app.
+report:
+  title:           ~       # default: "SPARKS report - <results folder>"
+  max_cells:       20000   # cells drawn in the interactive embedding (random, seeded)
+  max_genes:       60      # genes whose expression is embedded (markers, signatures, config genes)
+  max_table_rows:  3000    # rows kept per table in the report (full tables stay on disk)
+  embed_images:    true    # inline PNG/SVG pipeline figures (false: list them in Files only)
+  image_budget_mb: 25      # total size of inlined figures
+  max_image_mb:    1.5     # largest single figure that is inlined
+
 # ── Species config ─────────────────────────────────────────────────────────────
 # ref_primary / ref_secondary: name of a celldex function (no parentheses)
 # Supported: ImmGenData, MouseRNAseqData, HumanPrimaryCellAtlasData,

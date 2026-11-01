@@ -1,9 +1,14 @@
 Package: SPARKS
 Title: Single-cell Pipeline for Analysis of RNA-seq Systems
-Version: 0.1.0
+Version: 0.2.0
 Authors@R: person("lavauxt", role = c("aut", "cre"),
     email = "lavauxt@example.com")
-Description: SPARKS (Single-cell Pipeline for Analysis of RNA-seq Systems) is a modular scRNA-seq pipeline using Seurat, SingleR and scDblFinder.
+Description: SPARKS (Single-cell Pipeline for Analysis of RNA-seq Systems) is a
+    modular scRNA-seq pipeline using Seurat, SingleR and scDblFinder. Results of a
+    run are gathered into one self-contained interactive HTML report (plotly
+    figures in tabs), and explored in a Loupe-style Shiny app that re-runs
+    differential expression, re-clustering, signature scoring and enrichment on
+    selected cells as cached 'targets' analyses.
 License: GPL-3
 Encoding: UTF-8
 LazyData: true
@@ -17,6 +22,13 @@ Collate:
     'qc_utils.R'
     'sex_scoring.R'
     'visualization.R'
+    'results_bundle.R'
+    'demo_data.R'
+    'figures.R'
+    'report_unified.R'
+    'reanalysis.R'
+    'interactive_targets.R'
+    'app_explorer.R'
     'interface.R'
 Depends:
     R (>= 4.1.0)
@@ -46,7 +58,11 @@ Imports:
     stringr,
     harmony,
     eds,
-    glmGamPoi
+    glmGamPoi,
+    digest,
+    jsonlite,
+    methods,
+    tools
 Suggests:
     shiny,
     bslib,
@@ -70,6 +86,9 @@ Suggests:
     UCell,
     Rtsne,
     GSEABase,
+    pkgload,
+    uwot,
+    withr,
     testthat (>= 3.0.0)
 Remotes:
     rpolicastro/scProportionTest,
@@ -77,3 +96,4 @@ Remotes:
     immunogenomics/presto
 VignetteBuilder: knitr
 Config/roxygen2/version: 8.1.1
+Config/testthat/edition: 3

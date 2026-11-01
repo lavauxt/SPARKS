@@ -13,6 +13,9 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
   on.exit(restore_rng(), add = TRUE)
 
   make_dir(cfg$pipeline$results_dir)
+  # Record the exact configuration so the HTML report / explorer can show what produced the results.
+  tryCatch(yaml::write_yaml(cfg, file.path(cfg$pipeline$results_dir, "config_used.yaml")),
+           error = function(e) message("   [INFO] Could not write config_used.yaml: ", conditionMessage(e)))
   initial_result_files <- .snapshot_result_files(cfg$pipeline$results_dir)
   run_log <- file(file.path(cfg$pipeline$results_dir, "pipeline.log"), open = "wt")
   run_warnings <- character(0)
@@ -398,9 +401,9 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     if (all(vapply(c("htmltools", "base64enc"), requireNamespace,
                     quietly = TRUE, FUN.VALUE = logical(1)))) {
       safe_run(generate_all_results_report(cfg$pipeline$results_dir),
-               label = "Consolidated report")
+               label = "Unified HTML report")
     } else {
-      message("   [SKIP consolidated report] Packages 'htmltools' and 'base64enc' are required.")
+      message("   [SKIP unified report] Packages 'htmltools' and 'base64enc' are required.")
     }
   }
 }
