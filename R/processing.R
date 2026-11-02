@@ -181,6 +181,92 @@ export_raw_matrix <- function(cnts, out_dir, format = "mtx") {
   invisible(out_dir)
 }
 
+#' Read a Cell Ranger HDF5 10x matrix, robust to extra/empty HDF5 groups
+#'
+#' Seurat v5's Read10X_h5() silently picks one HDF5 group and errors if it does
+#' not contain a full 10x matrix. Files that have been round-tripped through
+#' other tools can carry extra empty groups (e.g. /Control alongside /matrix),
+#' which makes that reader fail. This helper inspects the file, picks the group
+#' that actually contains data/indices/indptr/shape/barcodes/features, and
+#' reads it. Works with any Seurat version (v4 or v5) because it never calls
+#' Seurat's own HDF5 reader.
+#' @keywords internal
+.read_10x_h5_flexible <- function(path, use_type = "RNA") {
+  if (!requireNamespace("hdf5r", quietly = TRUE)) {
+    stop("Reading Cell Ranger HDF5 files requires package 'hdf5r'. ",
+         "Install it with install.packages('hdf5r').", call. = FALSE)
+  }
+
+  h5 <- hdf5r::H5File$new(path, mode = "r")
+  on.exit(h5$close_all(), add = TRUE)
+
+  root  <- h5$ls()
+  groups <- root$name[root$obj_type == "H5I_GROUP"]
+
+  required <- c("data", "indices", "indptr", "shape", "barcodes", "features")
+  valid <- character()
+  for (g in groups) {
+    kids <- tryCatch(h5[[g]]$ls()$name, error = function(e) character())
+    if (all(required %in% kids)) valid <- c(valid, g)
+  }
+
+  if (length(valid) == 0L) {
+    stop("No HDF5 group in '", basename(path),
+         "' contains a complete 10x matrix (need ",
+         paste(required, collapse = ", "), "). Groups found: ",
+         if (length(groups)) paste(groups, collapse = ", ") else "<none>",
+         call. = FALSE)
+  }
+  if (length(valid) > 1L) {
+    message("   [WARN] Multiple 10x matrix groups in '", basename(path),
+            "' (", paste(valid, collapse = ", "),
+            "); using '", valid[[1L]], "'")
+  }
+  group <- valid[[1L]]
+  message("   [INFO] Reading HDF5 matrix group '/", group, "'")
+
+  grp      <- h5[[group]]
+  data     <- as.numeric(grp[["data"]]$read())
+  indices  <- as.integer(grp[["indices"]]$read())
+  indptr   <- as.integer(grp[["indptr"]]$read())
+  shape    <- as.integer(grp[["shape"]]$read())
+  barcodes <- as.character(grp[["barcodes"]]$read())
+  features <- grp[["features"]]$read()
+
+  # 10x 'features' is a matrix/data.frame with columns [id, symbol, type].
+  if (is.matrix(features) || is.data.frame(features)) {
+    feature_symbols <- as.character(features[, 2L])
+    feature_types   <- if (ncol(features) >= 3L) as.character(features[, 3L]) else
+      rep("Gene Expression", length(feature_symbols))
+  } else {
+    feature_symbols <- as.character(features)
+    feature_types   <- rep("Gene Expression", length(feature_symbols))
+  }
+
+  # 10x stores cells x genes; Seurat wants genes x cells.
+  mat <- Matrix::sparseMatrix(
+    i    = indices + 1L,
+    p    = indptr,
+    x    = data,
+    dims = shape
+  )
+  rownames(mat) <- barcodes
+  colnames(mat) <- feature_symbols
+
+  if (!is.null(use_type)) {
+    wanted <- switch(use_type,
+      RNA = "Gene Expression",
+      ADT = "Antibody Capture",
+      HTO = "Multiplexing Capture",
+      use_type)
+    keep <- feature_types == wanted
+    if (any(keep)) mat <- mat[, keep, drop = FALSE]
+  }
+
+  Matrix::t(mat)
+}
+
+
 #' Load count matrix from Alevin, Cell Ranger (MEX or HDF5), STARsolo,
 #' AnnData (.h5ad), or a generic MatrixMarket triplet
 #' @param folder_id Character
@@ -226,7 +312,7 @@ export_raw_matrix <- function(cnts, out_dir, format = "mtx") {
       )
       if (length(h5_candidates) == 0L) stop("No .h5 file found for ", folder_id, " in ", sample_dir)
       message("   Input: Cell Ranger (HDF5)  ", folder_id, " <- ", basename(h5_candidates[1L]))
-      Seurat::Read10X_h5(h5_candidates[1L])
+      .read_10x_h5_flexible(h5_candidates[1L])
     },
     "starsolo" = {
       feature    <- cfg$input$starsolo_feature %||% "Gene"
