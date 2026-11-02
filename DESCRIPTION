@@ -89,6 +89,10 @@ Suggests:
     pkgload,
     uwot,
     withr,
+    hdf5r,
+    DropletUtils,
+    anndataR,
+    zellkonverter
     testthat (>= 3.0.0)
 Remotes:
     rpolicastro/scProportionTest,
