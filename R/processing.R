@@ -190,6 +190,12 @@ export_raw_matrix <- function(cnts, out_dir, format = "mtx") {
 #' that actually contains data/indices/indptr/shape/barcodes/features, and
 #' reads it. Works with any Seurat version (v4 or v5) because it never calls
 #' Seurat's own HDF5 reader.
+#'
+#' 10x layout (per the 10x h5 spec): `shape = [n_features, n_barcodes]`.
+#' `indptr` has length n_barcodes + 1 and holds column (barcode) pointers;
+#' `indices` holds row (feature) indices. `sparseMatrix(i = indices + 1,
+#' p = indptr, dims = shape)` therefore builds a features x barcodes matrix
+#' directly -- no transpose needed.
 #' @keywords internal
 .read_10x_h5_flexible <- function(path, use_type = "RNA") {
   if (!requireNamespace("hdf5r", quietly = TRUE)) {
@@ -198,9 +204,13 @@ export_raw_matrix <- function(cnts, out_dir, format = "mtx") {
   }
 
   h5 <- hdf5r::H5File$new(path, mode = "r")
-  on.exit(h5$close_all(), add = TRUE)
+  on.exit({
+    tryCatch({
+      if (is.function(h5$close_all)) h5$close_all() else h5$close()
+    }, error = function(e) NULL)
+  }, add = TRUE)
 
-  root  <- h5$ls()
+  root   <- h5$ls()
   groups <- root$name[root$obj_type == "H5I_GROUP"]
 
   required <- c("data", "indices", "indptr", "shape", "barcodes", "features")
@@ -225,33 +235,74 @@ export_raw_matrix <- function(cnts, out_dir, format = "mtx") {
   group <- valid[[1L]]
   message("   [INFO] Reading HDF5 matrix group '/", group, "'")
 
-  grp      <- h5[[group]]
-  data     <- as.numeric(grp[["data"]]$read())
-  indices  <- as.integer(grp[["indices"]]$read())
-  indptr   <- as.integer(grp[["indptr"]]$read())
-  shape    <- as.integer(grp[["shape"]]$read())
-  barcodes <- as.character(grp[["barcodes"]]$read())
-  features <- grp[["features"]]$read()
+  grp <- h5[[group]]
 
-  # 10x 'features' is a matrix/data.frame with columns [id, symbol, type].
+  # `[[` on an hdf5r group returns either an H5D/H5Group handle (with $read),
+  # or -- for compound datasets like `features` -- a value already read into
+  # a data.frame/matrix by hdf5r. Handle both.
+  read_obj <- function(name) {
+    obj <- grp[[name]]
+    if (is.null(obj)) {
+      stop("HDF5 dataset '", name, "' not found under '", group, "'",
+           call. = FALSE)
+    }
+    if (is.function(obj$read)) {
+      val <- obj$read()
+      tryCatch(obj$close(), error = function(e) NULL)
+      return(val)
+    }
+    obj
+  }
+
+  data     <- as.numeric(read_obj("data"))
+  indices  <- as.integer(read_obj("indices"))
+  indptr   <- as.integer(read_obj("indptr"))
+  shape    <- as.integer(read_obj("shape"))
+  barcodes <- as.character(read_obj("barcodes"))
+  features <- read_obj("features")
+
+  # 10x 'features' can arrive as:
+  #   * matrix / data.frame with columns [id, name/symbol, type]  (typical)
+  #   * an H5Group with id / name / feature_type sub-datasets     (rare)
+  #   * a 1-D vector of feature names                            (very rare)
+  feature_symbols <- NULL
+  feature_types   <- NULL
+
   if (is.matrix(features) || is.data.frame(features)) {
-    feature_symbols <- as.character(features[, 2L])
-    feature_types   <- if (ncol(features) >= 3L) as.character(features[, 3L]) else
+    features <- as.data.frame(features, stringsAsFactors = FALSE)
+    feature_symbols <- as.character(features[[2L]])
+    feature_types   <- if (ncol(features) >= 3L) as.character(features[[3L]]) else
       rep("Gene Expression", length(feature_symbols))
+  } else if (is.function(features$ls)) {
+    kids <- features$ls()$name
+    grab <- function(k) {
+      if (!k %in% kids) return(NULL)
+      sub <- features[[k]]
+      v <- if (is.function(sub$read)) sub$read() else sub
+      tryCatch(sub$close(), error = function(e) NULL)
+      as.character(v)
+    }
+    feature_symbols <- grab("name") %||% grab("id")
+    feature_types   <- grab("feature_type") %||% rep("Gene Expression",
+                                                     length(feature_symbols))
+    tryCatch(features$close(), error = function(e) NULL)
   } else {
     feature_symbols <- as.character(features)
     feature_types   <- rep("Gene Expression", length(feature_symbols))
   }
 
-  # 10x stores cells x genes; Seurat wants genes x cells.
+  # 10x HDF5 layout: shape = [n_features, n_barcodes]. Column-major CSC with
+  # indptr = column (barcode) pointers, indices = row (feature) indices.
+  # sparseMatrix() with these dims gives a features x barcodes matrix --
+  # exactly what Seurat wants. No transpose.
   mat <- Matrix::sparseMatrix(
     i    = indices + 1L,
     p    = indptr,
     x    = data,
     dims = shape
   )
-  rownames(mat) <- barcodes
-  colnames(mat) <- feature_symbols
+  rownames(mat) <- feature_symbols
+  colnames(mat) <- barcodes
 
   if (!is.null(use_type)) {
     wanted <- switch(use_type,
@@ -260,10 +311,10 @@ export_raw_matrix <- function(cnts, out_dir, format = "mtx") {
       HTO = "Multiplexing Capture",
       use_type)
     keep <- feature_types == wanted
-    if (any(keep)) mat <- mat[, keep, drop = FALSE]
+    if (any(keep)) mat <- mat[keep, , drop = FALSE]
   }
 
-  Matrix::t(mat)
+  mat
 }
 
 
@@ -381,6 +432,22 @@ process_single_sample <- function(folder_id, protocol, file_prefix, qc_dir,
     message(" [!] Error: Could not load counts for ", folder_id)
     return(NULL)
   }
+
+  # Duplicate feature names (the same gene symbol mapped from several Ensembl
+  # IDs) are common in Cell Ranger feature tables and are hard-rejected by
+  # Seurat::CreateSeuratObject() ("LogMap: Duplicate rownames not allowed").
+  # Every downstream rownames-keyed operation also assumes uniqueness, so
+  # disambiguate here -- before the raw export and object creation -- so both
+  # artifacts end up consistent.
+  if (anyDuplicated(rownames(cnts))) {
+    n_dup <- sum(duplicated(rownames(cnts)))
+    dup_examples <- utils::head(unique(rownames(cnts)[duplicated(rownames(cnts))]), 5L)
+    message("   [INFO] ", n_dup, " duplicate feature name(s) ",
+            "(e.g. ", paste(dup_examples, collapse = ", "), "); ",
+            "making them unique with make.unique().")
+    rownames(cnts) <- make.unique(rownames(cnts))
+  }
+  
 
   safe_run(.warn_if_noninteger_counts(cnts, folder_id), label = "integer-counts check")
 

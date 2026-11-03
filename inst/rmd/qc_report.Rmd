@@ -27,14 +27,6 @@ library(ggplot2)
 library(dplyr)
 library(knitr)
 has_plotly <- requireNamespace("plotly", quietly = TRUE)
-if (has_plotly) {
-  plotly_dependencies <- htmltools::findDependencies(plotly::plot_ly())
-  plotly_main <- Filter(function(dep) identical(dep$name, "plotly-main"),
-                        plotly_dependencies)
-  has_plotly <- length(plotly_main) == 1L && file.exists(file.path(
-    plotly_main[[1L]]$src$file, plotly_main[[1L]]$script
-  ))
-}
 
 .interactive_plot <- function(plot) {
   if (has_plotly) {

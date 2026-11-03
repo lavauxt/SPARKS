@@ -134,15 +134,7 @@ if (!exists("%||%", mode = "function")) {
     plotly::config(displayModeBar = TRUE, scrollZoom = TRUE)
 }
 
-.plotly_asset_available <- function() {
-  if (!has_plotly) return(FALSE)
-  dependency <- htmltools::findDependencies(plotly::plot_ly())
-  main <- Filter(function(dep) identical(dep$name, "plotly-main"), dependency)
-  length(main) == 1L &&
-    file.exists(file.path(main[[1L]]$src$file, main[[1L]]$script))
-}
-
-has_plotly <- .plotly_asset_available()
+has_plotly <- requireNamespace("plotly", quietly = TRUE)
 
 # ── Materialise params ────────────────────────────────────────────────────────
 obj        <- params$seurat_obj
