@@ -528,7 +528,6 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
          call. = FALSE)
   }
   group_targets <- character(length(group_names))
-  report_targets <- character(length(group_names))
   for (i in seq_along(group_names)) {
     group <- group_names[i]
     group_key <- group_keys[i]
@@ -548,31 +547,12 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
       name, command, format = "file"
     )
   }
-  existing_target_names <- vapply(targets, `[[`, character(1), "name")
-  for (i in seq_along(group_names)) {
-    group <- group_names[i]
-    name <- paste0("reports_", group_keys[i])
-    previous_reports <- if (i > 1L) report_targets[seq_len(i - 1L)] else
-      character()
-    if (name %in% c(existing_target_names, previous_reports)) {
-      stop("Generated target name collision: ", name, call. = FALSE)
-    }
-    report_targets[i] <- name
-    command <- substitute(
-      SPARKS:::.generate_group_reports_target(
-        analysis_config, GROUP, GROUP_MARKER
-      ),
-      list(GROUP = group,
-           GROUP_MARKER = as.name(group_targets[i]))
-    )
-    targets[[length(targets) + 1L]] <- targets::tar_target_raw(
-      name, command, format = "file"
-    )
-  }
+  # The unified report depends on every group target; it reads the results
+  # folder itself, so there is no separate per-group report step.
   report_command <- substitute(
-    { invisible(REPORTS); SPARKS:::.write_unified_report(results_dir) },
-    list(REPORTS = as.call(c(list(as.name("c")),
-                             lapply(report_targets, as.name))))
+    { invisible(GROUPS); SPARKS:::.write_unified_report(results_dir) },
+    list(GROUPS = as.call(c(list(as.name("c")),
+                            lapply(group_targets, as.name))))
   )
   targets[[length(targets) + 1L]] <- targets::tar_target_raw(
     "consolidated_report", report_command, format = "file"
@@ -785,60 +765,6 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
   normalizePath(completed_files, winslash = "/", mustWork = TRUE)
 }
 
-.generate_group_reports_target <- function(analysis_config, group_key,
-                                           group_marker) {
-  invisible(group_marker)
-  cfg <- analysis_config$cfg
-  cfg$pipeline$results_dir <- analysis_config$results_dir
-  dirs <- .setup_group_dirs(cfg$pipeline$results_dir, group_key)
-  group_root <- dirs$base
-  object_path <- file.path(dirs$rdata, paste0("Merged_", group_key, ".rds"))
-  if (!file.exists(object_path)) {
-    marker <- file.path(cfg$pipeline$results_dir, "_targets",
-                        paste0("reports-skipped-", .safe_filename(group_key), ".txt"))
-    writeLines("No processed object was produced.", marker)
-    return(normalizePath(marker, winslash = "/", mustWork = TRUE))
-  }
-  group_files <- list.files(dirs$base, recursive = TRUE, full.names = TRUE)
-  object <- readRDS(object_path)
-  qc_template <- .find_report_template(cfg$report$rmd_template,
-                                      cfg$pipeline$config_dir, "qc_report.Rmd")
-  results_template <- .find_report_template(
-    cfg$report$results_rmd_template, cfg$pipeline$config_dir,
-    "results_report.Rmd"
-  )
-  reports <- character()
-  if (!is.null(qc_template)) {
-    reports <- c(reports, generate_qc_report(
-      seurat_obj = object, comp_group = group_key, out_dir = dirs$qc,
-      author = cfg$report$author %||% "Pipeline User",
-      title = cfg$report$title %||% paste("QC Report -", group_key),
-      rmd_template = qc_template, cfg = cfg, run_files = group_files,
-      log_path = file.path(cfg$pipeline$results_dir, "pipeline.log")
-    ))
-  }
-  if (!is.null(results_template)) {
-    groupings <- cfg$groupings_main
-    if (is.null(groupings)) {
-      groupings <- unique(c(cfg$processing$cluster_col, cfg$singler$label_names))
-    }
-    reports <- c(reports, generate_results_report(
-      seurat_obj = object, comp_group = group_key, out_dir = group_root,
-      groupings = intersect(groupings, colnames(object@meta.data)),
-      author = cfg$report$author %||% "Pipeline User",
-      title = cfg$report$title %||% paste("Results Report -", group_key),
-      rmd_template = results_template, cfg = cfg, run_files = group_files,
-      log_path = file.path(cfg$pipeline$results_dir, "pipeline.log")
-    ))
-  }
-  marker <- file.path(cfg$pipeline$results_dir, "_targets",
-                      paste0("reports-complete-", .safe_filename(group_key), ".txt"))
-  writeLines(paste(reports[file.exists(reports)], collapse = "\n"), marker)
-  completed_files <- c(marker, reports[file.exists(reports)])
-  completed_files <- unique(completed_files[file.exists(completed_files)])
-  normalizePath(completed_files, winslash = "/", mustWork = TRUE)
-}
-
 .group_result_files <- function(results_dir, group_root) {
   path <- file.path(results_dir, group_root)
   paths <- list.files(path, recursive = TRUE, full.names = TRUE)
@@ -894,7 +820,17 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
 
 .report_catalog <- function(results_dir) {
   catalog <- .result_catalog(results_dir)
-  catalog[catalog$type == "Report", , drop = FALSE]
+  catalog <- catalog[catalog$type == "Report", , drop = FALSE]
+  # The unified report is excluded from the results catalog (it is not a
+  # result), but it is the report users want to open here, so list it first.
+  unified <- file.path(results_dir, "SPARKS_all_results.html")
+  if (file.exists(unified)) {
+    path <- normalizePath(unified, winslash = "/", mustWork = TRUE)
+    catalog <- rbind(data.frame(name = "SPARKS_all_results.html", path = path,
+                                type = "Report", size = unname(file.info(path)$size),
+                                stringsAsFactors = FALSE), catalog)
+  }
+  catalog
 }
 
 #' List downloadable SPARKS results
@@ -1035,47 +971,13 @@ sparks_results <- function(results_dir) .result_catalog(results_dir)
   group_pages <- lapply(seq_along(groups), function(group_index) {
     group <- groups[[group_index]]
     items <- Filter(function(item) identical(item$group, group), result_content)
-    qc_reports <- Filter(function(item) grepl("^QC_report_", item$basename), items)
-    analysis_reports <- Filter(function(item) {
-      grepl("^Results_report_", item$basename)
-    }, items)
-    regular_files <- Filter(function(item) {
-      !item$type %in% "Report" ||
-        (!grepl("^QC_report_", item$basename) &&
-         !grepl("^Results_report_", item$basename))
-    }, items)
     sections <- list(
       Overview = htmltools::tags$div(
-        htmltools::tags$p("Results and reports for ", htmltools::tags$strong(group), "."),
-        htmltools::tags$ul(lapply(c(
-          paste(length(qc_reports), "QC report(s)"),
-          paste(length(analysis_reports), "analysis report(s)"),
-          paste(length(regular_files), "other result file(s)")
-        ), htmltools::tags$li))
+        htmltools::tags$p("Result files for ", htmltools::tags$strong(group), "."),
+        htmltools::tags$p(paste(length(items), "file(s)."))
       ),
-      QC = if (length(qc_reports)) lapply(qc_reports, function(item) {
-        htmltools::tags$section(
-          htmltools::tags$h3(item$name),
-          htmltools::tags$iframe(
-            srcdoc = paste(readLines(item$path, warn = FALSE), collapse = "\n"),
-            title = item$name,
-            style = "width:100%;height:80vh;border:1px solid #ddd"
-          )
-        )
-      }) else htmltools::tags$p("No QC report is available for this group."),
-      Results = if (length(analysis_reports)) lapply(analysis_reports,
-        function(item) htmltools::tags$section(
-          htmltools::tags$h3(item$name),
-          htmltools::tags$iframe(
-            srcdoc = paste(readLines(item$path, warn = FALSE), collapse = "\n"),
-            title = item$name,
-            style = "width:100%;height:80vh;border:1px solid #ddd"
-          )
-        )) else htmltools::tags$p(
-          "No analysis report is available for this group."
-        ),
-      Files = if (length(regular_files)) lapply(regular_files, `[[`, "content")
-        else htmltools::tags$p("No additional result files are available.")
+      Files = if (length(items)) lapply(items, `[[`, "content")
+        else htmltools::tags$p("No result files are available.")
     )
     section_ids <- paste0("group-", group_index, "-section-", seq_along(sections))
     section_nav <- htmltools::tags$nav(
@@ -1112,7 +1014,7 @@ sparks_results <- function(results_dir) .result_catalog(results_dir)
   )
   body <- htmltools::tags$body(
       htmltools::tags$h1("SPARKS — all results"),
-      htmltools::tags$p("A single report for all comparison groups. Use the group tabs, then switch between overview, QC, analysis, and result files."),
+      htmltools::tags$p("A single report for all comparison groups. Install 'plotly' and 'jsonlite' for the interactive report; this static page lists every result file by group."),
       if (length(groups)) {
         htmltools::tagList(
           htmltools::tags$nav(class = "group-nav",

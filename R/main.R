@@ -4,7 +4,8 @@
 #' @param sample_metadata Data frame
 #' @param processed_samples Optional list of cached sample objects or RDS paths,
 #'   ordered to match sample_metadata. Used by the targets workflow.
-#' @param render_reports Logical. Generate per-group HTML reports.
+#' @param render_reports Logical. Write the unified HTML report
+#'   (\code{SPARKS_all_results.html}) at the end of the run.
 #' @export
 sparks <- function(base_config_path, override_config_path = NULL, sample_metadata = NULL,
                    processed_samples = NULL, render_reports = TRUE) {
@@ -16,7 +17,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
   # Record the exact configuration so the HTML report / explorer can show what produced the results.
   tryCatch(yaml::write_yaml(cfg, file.path(cfg$pipeline$results_dir, "config_used.yaml")),
            error = function(e) message("   [INFO] Could not write config_used.yaml: ", conditionMessage(e)))
-  initial_result_files <- .snapshot_result_files(cfg$pipeline$results_dir)
   run_log <- file(file.path(cfg$pipeline$results_dir, "pipeline.log"), open = "wt")
   run_warnings <- character(0)
   sample_load_failures <- 0L
@@ -307,71 +307,6 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     rm(merged_obj); gc()
   }
 
-  if (isTRUE(render_reports) && requireNamespace("rmarkdown", quietly = TRUE)) {
-    qc_template <- .find_report_template(
-      cfg$report$rmd_template, cfg$pipeline$config_dir, "qc_report.Rmd"
-    )
-    results_template <- .find_report_template(
-      cfg$report$results_rmd_template, cfg$pipeline$config_dir,
-      "results_report.Rmd"
-    )
-    if (is.null(qc_template)) message("   [SKIP QC report] Template is not available.")
-    if (is.null(results_template)) message("   [SKIP Results report] Template is not available.")
-
-    for (comp_group in unique(sample_metadata$comparison_group)) {
-      dirs <- .setup_group_dirs(cfg$pipeline$results_dir, comp_group)
-      object_path <- file.path(dirs$rdata, paste0("Merged_", comp_group, ".rds"))
-      if (!file.exists(object_path)) next
-      report_obj <- readRDS(object_path)
-      groupings <- cfg$groupings_main
-      if (is.null(groupings)) {
-        groupings <- unique(c(cfg$processing$cluster_col, cfg$singler$label_names))
-      }
-      current_files <- .changed_result_files(initial_result_files, dirs$base)
-
-      if (!is.null(qc_template)) {
-        safe_run(generate_qc_report(
-          seurat_obj = report_obj,
-          comp_group = comp_group,
-          out_dir = dirs$qc,
-          author = cfg$report$author %||% "Pipeline User",
-          title = cfg$report$title %||% paste("QC Report -", comp_group),
-          rmd_template = qc_template,
-          cfg = cfg,
-          run_files = intersect(current_files,
-                                list.files(dirs$qc, recursive = TRUE,
-                                           full.names = TRUE)),
-          log_path = file.path(cfg$pipeline$results_dir, "pipeline.log")
-        ), label = "QC report")
-      }
-      if (!is.null(results_template)) {
-        report_groupings <- groupings
-        if (is.null(report_groupings) || length(report_groupings) == 0L) {
-          report_groupings <- unique(c(cfg$processing$cluster_col,
-                                       cfg$singler$label_names))
-        }
-        report_groupings <- report_groupings[
-          report_groupings %in% colnames(report_obj@meta.data)
-        ]
-        safe_run(generate_results_report(
-          seurat_obj = report_obj,
-          comp_group = comp_group,
-          out_dir = dirs$base,
-          groupings = report_groupings,
-          author = cfg$report$author %||% "Pipeline User",
-          title = cfg$report$title %||% paste("Results Report -", comp_group),
-          rmd_template = results_template,
-          cfg = cfg,
-          run_files = current_files,
-          log_path = file.path(cfg$pipeline$results_dir, "pipeline.log")
-        ), label = "Results report")
-      }
-      rm(report_obj)
-    }
-  } else if (isTRUE(render_reports)) {
-    message("   [SKIP HTML reports] Package 'rmarkdown' is not installed.")
-  }
-
   writeLines(utils::capture.output(utils::sessionInfo()),
              file.path(cfg$pipeline$results_dir, "session_info.txt"))
 
@@ -400,6 +335,8 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     }
     if (all(vapply(c("htmltools", "base64enc"), requireNamespace,
                     quietly = TRUE, FUN.VALUE = logical(1)))) {
+      # Interactive report when plotly + jsonlite are also installed, static
+      # consolidated page otherwise (see .write_unified_report()).
       safe_run(generate_all_results_report(cfg$pipeline$results_dir),
                label = "Unified HTML report")
     } else {

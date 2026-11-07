@@ -22,7 +22,7 @@ The written file path.
 }
 \description{
 Used by the targets plan and by [sparks()]: writes the unified interactive
-report, and falls back to the older static consolidated page only when the
+report, and falls back to the static consolidated page only when the
 packages the interactive one needs (plotly, jsonlite, htmltools, base64enc)
 are missing.
 }

@@ -41,22 +41,22 @@ You can install the development version of SPARKS from GitHub:
 if (!require("devtools", quietly = TRUE)) install.packages("devtools")
 
 # Install SPARKS (dependencies = TRUE also pulls in the optional report and
-# app packages: rmarkdown, knitr, DT, plotly, htmltools, base64enc, shiny,
-# bslib, targets, callr, RColorBrewer)
+# app packages: plotly, jsonlite, htmltools, base64enc, DT, shiny, bslib,
+# targets, callr, RColorBrewer)
 devtools::install_github("lavauxt/SPARKS", dependencies = TRUE)
 ```
 
-> **HTML reports (`QC_report_*.html` / `Results_report_*.html`)** are
-> generated automatically at the end of each comparison group's run.
-> They require the `rmarkdown` package (plus `DT`/`plotly`/`htmltools`/
-> `RColorBrewer` for the interactive Results report). If you installed
-> SPARKS without `dependencies = TRUE`, install them once with:
+> **HTML report.** At the end of a run SPARKS writes one interactive report,
+> `SPARKS_all_results.html`, built entirely from package code (no `.Rmd`
+> template, no `rmarkdown`). It needs `plotly`, `jsonlite`, `htmltools` and
+> `base64enc`; without them a static page listing the result files is written
+> instead. If you installed SPARKS without `dependencies = TRUE`:
 > ```r
-> install.packages(c("rmarkdown", "knitr", "DT", "plotly", "htmltools", "RColorBrewer"))
+> install.packages(c("plotly", "jsonlite", "htmltools", "base64enc"))
 > ```
-> The `.Rmd` templates ship inside the installed package (`inst/rmd/`) and
-> are located automatically — you no longer need to copy `qc_report.Rmd` /
-> `results_report.Rmd` next to your config file for reports to generate.
+> It replaces the former per-group `QC_report_*.html` and
+> `Results_report_*.html`; everything they showed is in its QC, Markers & DE,
+> Enrichment, Composition and Run tabs.
 
 ## Try it without data
 
@@ -85,23 +85,27 @@ sparks_report("results")                                   # defaults
 sparks_report("results", max_cells = 50000, embed_images = FALSE)
 ```
 
-It is **one file with no server and no network dependency**: plotly.js is
-inlined once, the data are embedded as JSON and each tab is drawn when you first
-open it. Send it to a collaborator or open it from a shared drive.
+It is **one file with no server, no network and no companion files**: its
+styles and script are embedded in the package code, plotly.js is inlined once
+from the installed `plotly` package, and the data are embedded as JSON. To open
+fast, only a small index is read at load time: each table, dataset and figure
+image sits in its own data block that is decoded the first time it is shown,
+images load as they scroll into view, and each tab is drawn when first opened.
+Send it to a collaborator or open it from a shared drive.
 
 | Tab | What it shows |
 | :-- | :------------ |
 | **Overview** | Headline numbers (cells, samples, genes, clusters, tables, files), overview figures, top markers per cluster, run details and jump links to the other tabs. |
-| **QC** | Cells kept per filtering stage and sample, doublet statistics, QC figures. |
+| **QC** | Filtering thresholds, cell retention per sample, samples with condition and input format, per-sample QC summary (median, Q1, Q3, all cells), QC violins and scatters, doublet calls, cell cycle / sex / doublet class counts, Alevin barcode diagnostics (knee plot, UMIs, genes) when the Alevin folders are reachable, pre / post filtering figures. |
 | **Embedding** | UMAP/t-SNE coloured by any metadata column or embedded gene. Lasso or box-select cells to get their composition, the genes higher in the selection, and the barcodes (download, copy, clear). Legend click toggles groups. |
 | **Genes** | Violin and dot plots for the embedded genes, grouped by any categorical column. |
-| **Markers & DE** | Cluster markers and DE tables with a live volcano plot (change the log2FC and adjusted p-value thresholds in the page). |
-| **Enrichment** | GSEA and `escape` results. |
-| **Composition** | Cell proportions per sample / condition and proportion tests. |
+| **Markers & DE** | Cluster markers and DE tables with a live volcano plot (change the log2FC and adjusted p-value thresholds in the page), a per-group summary computed on the full tables (genes tested, adjusted p < 0.05, up / down, median abs. log2FC) and DEG counts. |
+| **Enrichment** | GSEA results, `escape` scores (one heatmap per scoring method), the reasons GSEA was skipped (`GSEA_Status_*` files), per-cell score assays, GSEA projection and escape figures. |
+| **Composition** | Cell proportions per sample / condition, exact group sizes over all cells for any categorical column (clusters, SingleR labels, phase, sex, ...), proportion tests. |
 | **Tables** | Every result table of the run: sortable, filterable, CSV export. |
 | **Figures** | The pipeline's PNG/SVG figures as a gallery with a lightbox. |
-| **Files** | Index of every output file, and links to the per-comparison QC / Results reports. |
-| **Run** | Configuration used, warnings, session info, log tail. |
+| **Files** | Index of every output file with links (relative to where the report is written). |
+| **Run** | Pipeline diagnostics (warnings, errors and skipped analyses from `pipeline.log`), warnings, configuration used, session info, log tail. |
 
 Light, dark and automatic themes are available (button in the header), tabs are
 keyboard-accessible and the URL hash remembers the open tab.
@@ -123,14 +127,15 @@ report:
 
 Notes:
 
-* The report shows a **down-sampled panel** (`sparks_panel()`) of each merged
-  Seurat object. Anything that needs the full data (DE on an arbitrary
+* The report shows a **down-sampled panel** (`sparks_panel()`) of each saved
+  Seurat object; sample tables, QC summaries and group sizes are computed on
+  all cells. Anything that needs the full data (DE on an arbitrary
   selection, re-clustering, any gene) is what the explorer is for.
 * Palettes follow a fixed categorical order and are validated for colour-vision
   deficiency; with more than 8 categories the colours repeat as lighter tints
   and groups are labelled directly on the embedding.
 * If `plotly`, `jsonlite`, `htmltools` or `base64enc` are missing, the pipeline
-  falls back to the older static consolidated page and says so in the log.
+  falls back to a static page listing the result files and says so in the log.
 * `generate_all_results_report()` now writes this same unified report.
 
 ## The explorer: a Loupe-style Shiny app
@@ -230,7 +235,8 @@ results folder in the full [explorer](#the-explorer-a-loupe-style-shiny-app)
 (selection, on-the-fly DE, re-clustering, signature scoring, enrichment).
 
 The workflow also creates `SPARKS_all_results.html`, the
-[unified interactive report](#the-unified-html-report). The Shiny results browser
+[unified interactive report](#the-unified-html-report), once every comparison
+group has finished; the **Reports** page of the app previews it. The Shiny results browser
 also supports exporting tabular results as CSV or TSV.
 
 ```r
@@ -463,9 +469,8 @@ with `processing$tsne_perplexity`.
 Analysis outputs use separate sibling folders under each grouping: `DEG/`,
 `Pseudobulk/`, `Expression/`, `Proportions/`, `Correlation/`, and `GSEA/`.
 Each run also records console messages in `pipeline.log` and writes genuine R
-warnings to `warnings.txt`; the HTML reports include the current run's available
-analysis tables and a concise diagnostics section. Older table files are not
-mistaken for current-run results.
+warnings to `warnings.txt`; the unified report lists those warnings, errors and
+skipped analyses in its **Run** tab.
 
 ## Output Structure
 
@@ -479,8 +484,7 @@ results_dir/
   └── Group_1/
       ├── QC/
       │   ├── VlnPlot_Group_1.png            # Ingestion profile distributions
-      │   ├── ScatterPlot_Group_1.png        # Depth vs feature count tracking
-      │   └── QC_report_Group_1.html         # Auto-generated QC HTML report
+      │   └── ScatterPlot_Group_1.png        # Depth vs feature count tracking
       ├── Main/                              # (repeated per subset, e.g. Fibroblasts/, Endothelial/)
       │   └── seurat_clusters/               # (repeated per grouping: singleR labels, type_col, ...)
       │       ├── UMAP/
@@ -501,7 +505,6 @@ results_dir/
       ├── Escape/
       │   ├── Enrichment_Scores.tsv          # Pathway scores per single cell
       │   └── Pathway_Heatmap.png            # Cluster-averaged pathway enrichment profiles
-      ├── Results_report_Group_1.html        # Auto-generated interactive Results HTML report
       └── RData/
           └── Group_1_Seurat_Processed.rds   # Production-ready Seurat binary object file
 ```
@@ -527,4 +530,4 @@ reference data and the Bioconductor stack and is run on your own data.
 
 ## License
 
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
+This project is licensed under the [GNU General Public License v3.0](LICENSE).

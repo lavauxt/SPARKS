@@ -523,7 +523,8 @@ sparks_explorer_server <- function(id = "explorer", results_dir, object = NULL,
     shiny::observeEvent(input$build_report, {
       out <- file.path(results_dir, "SPARKS_all_results.html")
       shiny::withProgress(message = "Building the unified report", value = 0.3, {
-        res <- tryCatch(sparks_report(results_dir, output_file = out, quiet = TRUE),
+        res <- tryCatch(do.call(sparks_report, c(list(results_dir = results_dir, output_file = out, quiet = TRUE),
+                                                  .report_options(results_dir))),
                         error = function(e) e)
       })
       if (inherits(res, "error")) {

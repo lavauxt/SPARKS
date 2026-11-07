@@ -26,6 +26,7 @@ Collate:
     'demo_data.R'
     'figures.R'
     'report_unified.R'
+    'report_assets.R'
     'reanalysis.R'
     'interactive_targets.R'
     'app_explorer.R'
@@ -92,7 +93,7 @@ Suggests:
     hdf5r,
     DropletUtils,
     anndataR,
-    zellkonverter
+    zellkonverter,
     testthat (>= 3.0.0)
 Remotes:
     rpolicastro/scProportionTest,

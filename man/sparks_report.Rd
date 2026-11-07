@@ -32,7 +32,7 @@ sparks_report(
 \item{max_table_rows}{Row cap per embedded table (the files on disk are
 never truncated).}
 
-\item{embed_images}{Embed the pipeline's PNG figures as base64.}
+\item{embed_images}{Embed the pipeline's PNG / SVG figures as base64.}
 
 \item{image_budget_mb}{Total size of embedded images.}
 
@@ -47,20 +47,29 @@ never truncated).}
 }
 \description{
 Produces **one self-contained HTML file** that gathers every result of a
-pipeline run into tabs: an overview, QC, an interactive embedding explorer
-(lasso selection, colour by metadata or gene), gene violin and dot plots,
-markers / differential expression with a live volcano plot, enrichment,
-composition, every result table, the pipeline's figures, the file index and
-run information. The file needs no server and no network: plotly.js is
-inlined once, data are embedded as JSON, and each tab is drawn lazily when
-opened.
+pipeline run into tabs: an overview, QC (thresholds, input formats, cell
+retention, per-sample QC summaries, doublets, cell cycle / sex, Alevin
+barcode diagnostics), an interactive embedding explorer (lasso selection,
+colour by metadata or gene), gene violin and dot plots, markers /
+differential expression with a live volcano plot and per-group summaries,
+enrichment (GSEA, escape, skip diagnostics), composition and group sizes,
+every result table, the pipeline's figures, the file index and run
+information (configuration, diagnostics, log, session info).
 }
 \details{
-Figures are drawn from compact "panels" extracted from the merged Seurat
+The file needs no server, no network and no companion files: the page
+styles and script are embedded in the package code, plotly.js is inlined
+once from the installed \pkg{plotly} package, and the data are embedded as
+JSON. Only a small index is parsed when the page opens; each table, dataset
+and figure image sits in its own inert data block that is decoded the first
+time it is shown, and each tab is drawn lazily when opened.
+
+Figures are drawn from compact "panels" extracted from the saved Seurat
 objects ([sparks_panel()]): a down-sampled embedding, a handful of metadata
-columns and the expression of a limited gene set. Anything larger -- full
-differential expression on an arbitrary selection, re-clustering, any gene --
-is what the Shiny explorer ([sparks_explorer()]) is for.
+columns and the expression of a limited gene set. Counts and QC summaries
+are computed on the full objects. Anything larger -- full differential
+expression on an arbitrary selection, re-clustering, any gene -- is what the
+Shiny explorer ([sparks_explorer()]) is for.
 }
 \examples{
 \dontrun{

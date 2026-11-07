@@ -22,7 +22,8 @@ sparks(
 \item{processed_samples}{Optional list of cached sample objects or RDS paths,
 ordered to match sample_metadata. Used by the targets workflow.}
 
-\item{render_reports}{Logical. Generate per-group HTML reports.}
+\item{render_reports}{Logical. Write the unified HTML report
+(\code{SPARKS_all_results.html}) at the end of the run.}
 }
 \description{
 Run the complete scRNA-seq pipeline

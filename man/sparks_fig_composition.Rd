@@ -7,8 +7,9 @@
 sparks_fig_composition(prop, mode = "light", title = NULL)
 }
 \arguments{
-\item{prop}{A \code{Proportions_*} table (\code{Var1} = group, \code{Var2} =
-sample/condition, \code{Freq} = proportion, \code{Count}).}
+\item{prop}{A \code{Proportions_*} table (\code{Var1} or \code{Group} = group,
+\code{Var2} or \code{Condition} = sample/condition, \code{Freq} = proportion,
+\code{Count}).}
 
 \item{mode}{Colour mode.}
 

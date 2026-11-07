@@ -288,16 +288,24 @@ sparks_fig_volcano <- function(deg, lfc_col = "avg_log2FC", p_col = "p_val_adj",
 
 #' Cell-type composition per sample / condition
 #'
-#' @param prop A \code{Proportions_*} table (\code{Var1} = group, \code{Var2} =
-#'   sample/condition, \code{Freq} = proportion, \code{Count}).
+#' @param prop A \code{Proportions_*} table (\code{Var1} or \code{Group} = group,
+#'   \code{Var2} or \code{Condition} = sample/condition, \code{Freq} = proportion,
+#'   \code{Count}).
 #' @param mode Colour mode.
 #' @param title Plot title.
 #' @return plotly object or \code{NULL}.
 #' @export
 sparks_fig_composition <- function(prop, mode = "light", title = NULL) {
   .require_plotly()
+  if (!is.data.frame(prop) || !nrow(prop)) return(NULL)
+  # Pipeline tables (run_proportion_analysis) use Group / Condition; tables built
+  # from table() use Var1 / Var2.
+  if (!all(c("Var1", "Var2") %in% names(prop)) && all(c("Group", "Condition") %in% names(prop))) {
+    names(prop)[match(c("Group", "Condition"), names(prop))] <- c("Var1", "Var2")
+  }
   need <- c("Var1", "Var2", "Freq")
-  if (!is.data.frame(prop) || !all(need %in% names(prop)) || !nrow(prop)) return(NULL)
+  if (!all(need %in% names(prop))) return(NULL)
+  prop$Freq <- suppressWarnings(as.numeric(prop$Freq))
   prop$Var1 <- as.character(prop$Var1)
   prop$Var2 <- as.character(prop$Var2)
   groups <- unique(prop$Var1)
@@ -375,7 +383,7 @@ sparks_fig_gsea <- function(gsea, top_n = 20L, mode = "light") {
 #' @export
 sparks_fig_heatmap <- function(mat, title = NULL, diverging = FALSE, mode = "light") {
   .require_plotly()
-  if (!is.matrix(mat) || !length(mat)) return(NULL)
+  if (!is.matrix(mat) || !length(mat) || !any(is.finite(mat))) return(NULL)
   ch <- .SPARKS_CHROME[[mode]]
   scale <- if (diverging) {
     list(c(0, .SPARKS_DIV[[5L]]), c(0.25, .SPARKS_DIV[[4L]]), c(0.5, ch$mid),
