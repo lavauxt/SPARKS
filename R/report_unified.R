@@ -78,7 +78,7 @@ sparks_report <- function(results_dir,
   for (d in datasets$datasets) add_blob(paste0("sd-", d$head$id), .json(d$body))
   tables <- .report_tables(bundle, max_table_rows, say)
   for (t in tables) add_blob(paste0("sd-", t$json$id), .json(t$data))
-  figures <- .report_figures(bundle, datasets$sample_counts, say)
+  figures <- .report_figures(bundle, datasets, say)
   images <- .report_images(bundle, if (isTRUE(embed_images)) image_budget_mb else 0,
                            if (isTRUE(embed_images)) max_image_mb else 0, out_dir, say)
 
@@ -100,8 +100,12 @@ sparks_report <- function(results_dir,
     datasets = lapply(datasets$datasets, `[[`, "head"),
     tables = lapply(tables, `[[`, "json"),
     figures = lapply(figures, function(f) {
-      f$spec <- structure(f$spec_json, class = "json")
-      f$spec_json <- NULL
+      # gsea_projection figures have no plotly spec (drawn client-side); keep
+      # their payload intact, only re-class `spec_json` for the others.
+      if (!is.null(f$spec_json)) {
+        f$spec <- structure(f$spec_json, class = "json")
+        f$spec_json <- NULL
+      }
       f
     }),
     images = lapply(images, `[[`, "head"),
@@ -448,7 +452,8 @@ sparks_report <- function(results_dir,
 
 # ---- Figures --------------------------------------------------------------------------
 
-.report_figures <- function(bundle, sample_counts, say) {
+.report_figures <- function(bundle, datasets, say) {
+  sample_counts <- datasets$sample_counts
   figs <- list()
   add <- function(tab, title, group, p) {
     spec <- tryCatch(.figure_spec_json(p), error = function(e) NULL)
@@ -494,6 +499,55 @@ sparks_report <- function(results_dir,
           .safe_fig(sparks_fig_composition(p)))
     }
   }
+
+  # ---- Interactive GSEA projections (colored by group-level NES) -----------------
+  # Data lives entirely on disk (GSEA_*.tsv + the embedded panel); no Seurat
+  # object is needed at render time. One figure per (comparison, grouping); the
+  # client-side JS switches pathways from a dropdown, so a single figure covers
+  # every pathway of a run -- no PNG, no server, same look as the other UMAPs.
+  gsea_groups <- unique(cat[cat$kind == "gsea" & !is.na(cat$grouping),
+                            c("comparison", "grouping")])
+  if (nrow(gsea_groups) && length(datasets$datasets)) {
+    for (i in seq_len(nrow(gsea_groups))) {
+      cmp <- gsea_groups$comparison[[i]]
+      grp <- gsea_groups$grouping[[i]]
+      # Match the (merged) dataset for this comparison.
+      ds_idx <- which(vapply(datasets$datasets, function(d)
+        identical(d$head$kind, "merged") && identical(d$head$comparison, cmp),
+        logical(1)))[1L]
+      if (is.na(ds_idx)) next
+      gsea <- sparks_table(bundle, "gsea", comparison = cmp, grouping = grp)
+      if (!nrow(gsea) || !all(c("pathway", "group", "NES") %in% names(gsea))) next
+      gsea$NES <- suppressWarnings(as.numeric(gsea$NES))
+      gsea$padj <- if ("padj" %in% names(gsea))
+        suppressWarnings(as.numeric(gsea$padj)) else NA_real_
+      gsea <- gsea[is.finite(gsea$NES), , drop = FALSE]
+      if (!nrow(gsea)) next
+      gsea <- gsea[order(gsea$padj, na.last = TRUE), , drop = FALSE]
+      gsea <- gsea[!duplicated(paste(gsea$pathway, gsea$group, sep = "\r")), , drop = FALSE]
+      by_pw <- split(gsea, gsea$pathway)
+      # Rank pathways by best padj; keep the top 20 to keep the dropdown usable.
+      by_pw <- by_pw[order(vapply(by_pw, function(d) min(d$padj, na.rm = TRUE),
+                                  numeric(1)), na.last = TRUE)]
+      by_pw <- utils::head(by_pw, 20L)
+      figs[[length(figs) + 1L]] <- list(
+        id = paste0("f", length(figs) + 1L),
+        tab = "enrichment",
+        kind = "gsea_projection",
+        title = "Gene-set enrichment on the embedding",
+        group = paste(stats::na.omit(c(cmp, grp)), collapse = " / "),
+        dataset_index = ds_idx - 1L,        # 0-based index into DATA.datasets
+        grouping_col  = grp,
+        pathways      = .arr(names(by_pw)),
+        by_pathway    = lapply(by_pw, function(d) list(
+          groups = .arr(as.character(d$group)),
+          NES    = .arr(round(d$NES, 4L)),
+          padj   = .arr(signif(d$padj, 4L))
+        ))
+      )
+    }
+  }
+
   say("built ", length(figs), " figures")
   figs
 }
@@ -671,7 +725,9 @@ sparks_report <- function(results_dir,
 }
 
 .report_run <- function(bundle) {
-  cfg_path <- file.path(bundle$dir, "config_used.yaml")
+  cfg_path <- .results_find_file(
+    file.path(bundle$dir, "config", "config_used.yaml"),
+    file.path(bundle$dir, "config_used.yaml"))
   log_lines <- if (isTRUE(bundle$run$has_log)) readLines(bundle$run$log, warn = FALSE) else character()
   diag <- grep("\\[(WARNING|ERROR)\\]", log_lines, value = TRUE)
   skips <- grep("\\[SKIP", log_lines, value = TRUE)
@@ -845,7 +901,9 @@ sparks_report <- function(results_dir,
 #' @return Named list of arguments for [sparks_report()].
 #' @keywords internal
 .report_options <- function(results_dir) {
-  path <- file.path(results_dir, "config_used.yaml")
+  path <- .results_find_file(
+    file.path(results_dir, "config", "config_used.yaml"),
+    file.path(results_dir, "config_used.yaml"))
   if (!file.exists(path) || !requireNamespace("yaml", quietly = TRUE)) return(list())
   cfg <- tryCatch(yaml::read_yaml(path), error = function(e) NULL)
   rep <- if (is.list(cfg)) cfg$report else NULL

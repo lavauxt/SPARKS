@@ -74,7 +74,7 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
 }
 
 .write_ui_targets_override <- function(input, results_dir) {
-  override <- file.path(results_dir, "shiny_override.yaml")
+  override <- file.path(results_dir, "config", "shiny_override.yaml")
   make_dir(dirname(override))
   cfg <- if (nzchar(input$yaml_text)) {
     yaml::yaml.load(input$yaml_text)
@@ -97,7 +97,8 @@ run_sparks_targets <- function(base_config_path, override_config_path = NULL,
                                  list(run = input$run_pseudobulk))
   }
   if (!is.null(input$sample_file)) {
-    sample_dest <- file.path(results_dir, "sample_table.tsv")
+    sample_dest <- file.path(results_dir, "config", "sample_table.tsv")
+    make_dir(dirname(sample_dest))
     file.copy(input$sample_file$datapath, sample_dest, overwrite = TRUE)
     if (is.null(cfg$pipeline)) cfg$pipeline <- list()
     cfg$pipeline$sample_table <- normalizePath(sample_dest, winslash = "/",
@@ -1216,8 +1217,10 @@ sparks_app <- function(...) {
         return()
       }
       dir.create(input$results_dir, recursive = TRUE, showWarnings = FALSE)
-      state$log_path <- file.path(input$results_dir, "shiny_run.log")
-      process_log <- file.path(input$results_dir, "shiny_process.log")
+      log_dir <- file.path(input$results_dir, "log")
+      dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+      state$log_path <- file.path(log_dir, "shiny_run.log")
+      process_log <- file.path(log_dir, "shiny_process.log")
       state$log_offsets <- .capture_log_offsets(c(state$log_path, process_log))
       state$logs_active <- TRUE
       .log_run_event(state$log_path, "VALIDATING",
@@ -1257,7 +1260,9 @@ sparks_app <- function(...) {
         state$report <- paste("VALIDATION FAILED:", conditionMessage(e))
         if (!is.null(input$results_dir) && nzchar(input$results_dir)) {
           dir.create(input$results_dir, recursive = TRUE, showWarnings = FALSE)
-          state$log_path <- file.path(input$results_dir, "shiny_run.log")
+          log_dir <- file.path(input$results_dir, "log")
+          dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+          state$log_path <- file.path(log_dir, "shiny_run.log")
           .log_run_event(state$log_path, "VALIDATION FAILED",
                          conditionMessage(e))
         }
@@ -1271,7 +1276,7 @@ sparks_app <- function(...) {
         return()
       }
       if (is.null(state$process) || !state$process$is_alive()) {
-        override <- file.path(input$results_dir, "shiny_override.yaml")
+        override <- file.path(input$results_dir, "config", "shiny_override.yaml")
         selected_targets <- if (length(input$target_names)) input$target_names else NULL
         state$started_at <- Sys.time()
         state$last_heartbeat <- Sys.time()
@@ -1281,6 +1286,8 @@ sparks_app <- function(...) {
                              if (is.null(selected_targets)) "all" else
                                paste(selected_targets, collapse = ",")))
         package_path <- getNamespaceInfo(asNamespace("SPARKS"), "path")
+        log_dir_run <- file.path(input$results_dir, "log")
+        dir.create(log_dir_run, recursive = TRUE, showWarnings = FALSE)
         state$process <- tryCatch(callr::r_bg(
           function(base, over, out, selected, log_path, package_path,
                    library_paths) {
@@ -1311,7 +1318,7 @@ sparks_app <- function(...) {
                       selected_targets, state$log_path,
                       getNamespaceInfo(asNamespace("SPARKS"), "path"),
                       .libPaths()),
-          stdout = file.path(input$results_dir, "shiny_process.log"),
+          stdout = file.path(log_dir_run, "shiny_process.log"),
           stderr = "2>&1"
         ), error = identity)
         if (inherits(state$process, "error")) {
@@ -1402,8 +1409,9 @@ sparks_app <- function(...) {
       if (!isTRUE(state$logs_active)) {
         return("Run validation and logs will appear here after starting a run.")
       }
-      path <- state$log_path %||% file.path(input$results_dir, "shiny_run.log")
-      process_log <- file.path(input$results_dir, "shiny_process.log")
+      log_dir <- file.path(input$results_dir, "log")
+      path <- state$log_path %||% file.path(log_dir, "shiny_run.log")
+      process_log <- file.path(log_dir, "shiny_process.log")
       lines <- .read_log_lines_since(c(path, process_log), state$log_offsets)
       statuses <- tryCatch({
         store <- file.path(input$results_dir, "_targets", "store")
@@ -1420,7 +1428,8 @@ sparks_app <- function(...) {
     output$run_log <- shiny::renderText({
       shiny::invalidateLater(1000, session)
       if (!isTRUE(state$logs_active)) return("No run log for this app session yet.")
-      paths <- c(state$log_path, file.path(input$results_dir, "shiny_process.log"))
+      log_dir <- file.path(input$results_dir, "log")
+      paths <- c(state$log_path, file.path(log_dir, "shiny_process.log"))
       lines <- .read_log_lines_since(paths, state$log_offsets)
       paste(tail(lines, 60), collapse = "\n")
     })

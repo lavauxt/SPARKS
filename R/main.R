@@ -14,10 +14,11 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
   on.exit(restore_rng(), add = TRUE)
 
   make_dir(cfg$pipeline$results_dir)
+  layout <- .results_layout(cfg$pipeline$results_dir)
   # Record the exact configuration so the HTML report / explorer can show what produced the results.
-  tryCatch(yaml::write_yaml(cfg, file.path(cfg$pipeline$results_dir, "config_used.yaml")),
+  tryCatch(yaml::write_yaml(cfg, layout$config_used),
            error = function(e) message("   [INFO] Could not write config_used.yaml: ", conditionMessage(e)))
-  run_log <- file(file.path(cfg$pipeline$results_dir, "pipeline.log"), open = "wt")
+  run_log <- file(layout$pipeline_log, open = "wt")
   run_warnings <- character(0)
   sample_load_failures <- 0L
   log_condition <- function(type, condition) {
@@ -28,10 +29,12 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     )
     flush(run_log)
   }
-  unlink(file.path(cfg$pipeline$results_dir, "warnings.txt"))
+  # Clean both the new and the legacy (root) warning file so nothing stale
+  # from an earlier run is served alongside this one.
+  unlink(c(layout$warnings, file.path(cfg$pipeline$results_dir, "warnings.txt")))
   on.exit({
     if (length(run_warnings) > 0L) {
-      writeLines(unique(run_warnings), file.path(cfg$pipeline$results_dir, "warnings.txt"))
+      writeLines(unique(run_warnings), layout$warnings)
     }
     close(run_log)
   }, add = TRUE)
@@ -307,8 +310,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
     rm(merged_obj); gc()
   }
 
-  writeLines(utils::capture.output(utils::sessionInfo()),
-             file.path(cfg$pipeline$results_dir, "session_info.txt"))
+  writeLines(utils::capture.output(utils::sessionInfo()), layout$session_info)
 
   if (sample_load_failures > 0L) {
     message("Pipeline finished with ", sample_load_failures,
@@ -316,7 +318,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
   } else if (length(run_warnings) > 0L) {
     message("Pipeline finished with warnings. See warnings.txt")
   } else {
-    unlink(file.path(cfg$pipeline$results_dir, "warnings.txt"))
+    unlink(layout$warnings)
     message("Pipeline finished successfully.")
   }
   },
@@ -330,8 +332,7 @@ sparks <- function(base_config_path, override_config_path = NULL, sample_metadat
 
   if (isTRUE(render_reports)) {
     if (length(run_warnings)) {
-      writeLines(unique(run_warnings),
-                 file.path(cfg$pipeline$results_dir, "warnings.txt"))
+      writeLines(unique(run_warnings), layout$warnings)
     }
     if (all(vapply(c("htmltools", "base64enc"), requireNamespace,
                     quietly = TRUE, FUN.VALUE = logical(1)))) {

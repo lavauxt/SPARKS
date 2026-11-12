@@ -55,6 +55,54 @@ make_dir <- function(path) {
   invisible(path)
 }
 
+# ---- Results layout helpers ------------------------------------------------
+
+#' Paths of the standard results subfolders
+#'
+#' The unified report lives at the results root (unchanged). Logs go to
+#' \code{log/}, the config snapshot to \code{config/}. Both subfolders are
+#' created on first call.
+#'
+#' @param results_dir Character. Results directory.
+#' @return Named list with \code{root}, \code{log_dir}, \code{config_dir} and
+#'   the standard file paths beneath them.
+#' @keywords internal
+.results_layout <- function(results_dir) {
+  log_dir <- file.path(results_dir, "log")
+  config_dir <- file.path(results_dir, "config")
+  make_dir(log_dir)
+  make_dir(config_dir)
+  list(
+    root = results_dir,
+    log_dir = log_dir,
+    config_dir = config_dir,
+    pipeline_log = file.path(log_dir, "pipeline.log"),
+    warnings = file.path(log_dir, "warnings.txt"),
+    session_info = file.path(log_dir, "session_info.txt"),
+    shiny_run = file.path(log_dir, "shiny_run.log"),
+    shiny_process = file.path(log_dir, "shiny_process.log"),
+    config_used = file.path(config_dir, "config_used.yaml"),
+    report_html = file.path(results_dir, "SPARKS_all_results.html")
+  )
+}
+
+#' Find a file in its new subfolder, falling back to the legacy root path
+#'
+#' Older SPARKS runs wrote \code{pipeline.log}, \code{warnings.txt},
+#' \code{session_info.txt} and \code{config_used.yaml} directly into the
+#' results folder. Newer runs place them in \code{log/} and \code{config/}.
+#' This helper keeps the report and explorer readable for both.
+#'
+#' @param new_path Preferred (new layout) path.
+#' @param legacy_path Historical (root) path.
+#' @return The first path that exists; \code{new_path} if neither does.
+#' @keywords internal
+.results_find_file <- function(new_path, legacy_path) {
+  if (length(new_path) && !is.na(new_path) && file.exists(new_path)) return(new_path)
+  if (length(legacy_path) && !is.na(legacy_path) && file.exists(legacy_path)) return(legacy_path)
+  new_path
+}
+
 #' Safely execute an expression, returning a fallback on error
 #' @param expr Expression to evaluate
 #' @param label Character. Label to print if error occurs

@@ -670,13 +670,94 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
   }
   function tablesOfKind(kinds) { return DATA.tables.filter(function (t) { return kinds.indexOf(t.kind) >= 0; }); }
   function figuresOf(tabId, group) { return DATA.figures.filter(function (f) { return f.tab === tabId && (group === undefined || (f.group || '') === group); }); }
+    // Cards for a list of figure specs. Recognised kinds:
+  //   * default          -> a pre-built plotly spec (`f.spec`)
+  //   * gsea_projection  -> an interactive embedding coloured by group-level
+  //                         NES, with a pathway selector; drawn client-side
+  //                         from DATA.datasets + f.by_pathway (no PNG, no server).
   function figureCards(figs, cls) {
     return figs.map(function (f) {
+      if (f.kind === 'gsea_projection') return gseaProjectionCard(f, cls);
       var box = plotBox(cls || '');
       var c = card(f.title, f.group || '', box);
       setTimeout(function () { specPlot(box, f.spec); }, 0);
       return c;
     });
+  }
+
+  // Interactive GSEA projection: a UMAP whose cells are coloured by their
+  // group's NES on the current pathway. Uses the same diverging scale as the
+  // volcano plot (DIV[4] .. c.mid .. DIV[0]) so the meaning of colour is
+  // consistent across the report, and the same lasso / dragmode as the
+  // Embedding tab.
+  function gseaProjectionCard(f, cls) {
+    var sel = h('select', { 'aria-label': 'Pathway' },
+      f.pathways.map(function (p) { return h('option', { value: p, text: p }); }));
+    var box = plotBox(cls || 'tall');
+    var desc = h('p', { class: 'note gsea-desc' });
+    var card = h('section', { class: 'card' },
+      h('header', null,
+        h('h3', { text: f.title }),
+        h('span', { class: 'muted small hint', text: f.group || '' })),
+      h('div', { class: 'toolbar' }, h('label', { class: 'field' }, 'Pathway', sel)),
+      box, desc);
+    var draw = function () {
+      var ds = dsAt(f.dataset_index);
+      var m = ds.meta[f.grouping_col];
+      if (!m || m.type !== 'cat') {
+        showNote(box, 'Grouping column "' + f.grouping_col +
+                      '" is not in the embedded panel.');
+        return;
+      }
+      var lv = m.levels, codes = m.codes, n = ds.cells.length;
+      var pw = f.by_pathway[sel.value];
+      if (!pw) { showNote(box, 'No data for this pathway.'); return; }
+      var map = {};
+      pw.groups.forEach(function (g, k) { map[g] = { NES: pw.NES[k], padj: pw.padj[k] }; });
+      var vals = new Float64Array(n);
+      for (var i = 0; i < n; i++) {
+        var rec = map[lv[codes[i]]];
+        vals[i] = rec && isFinite(rec.NES) ? rec.NES : NaN;
+      }
+      var lim = 1e-6;
+      vals.forEach(function (v) { if (isFinite(v)) lim = Math.max(lim, Math.abs(v)); });
+      desc.textContent = lv.map(function (g) {
+        var r = map[g];
+        return r ? (g + ': NES ' + fmt(r.NES) + ' (padj ' + fmt(r.padj) + ')')
+                 : (g + ': NES NA');
+      }).join(' \u00b7 ');
+      plot(box, function (t) {
+        var c = CHROME[t];
+        var type = n > 8000 ? 'scattergl' : 'scatter';
+        var data = [{
+          type: type, mode: 'markers', x: ds.x, y: ds.y, customdata: ds.cells,
+          text: ds.cells.map(function (cname, i) {
+            return cname + '<br>' + f.grouping_col + ': ' + lv[codes[i]] +
+                   '<br>NES: ' + (isFinite(vals[i]) ? fmt(vals[i]) : 'NA');
+          }),
+          hoverinfo: 'text',
+          marker: {
+            size: 4, opacity: 0.85,
+            color: vals, cmin: -lim, cmax: lim,
+            colorscale: [[0, DIV[4]], [0.5, c.mid], [1, DIV[0]]],
+            colorbar: { title: { text: 'NES' }, thickness: 10, len: 0.6 }
+          }
+        }];
+        var L = baseLayout(t, {
+          xlab: ds.reduction.toUpperCase() + ' 1',
+          ylab: ds.reduction.toUpperCase() + ' 2',
+          legend: false, dragmode: 'lasso',
+          xaxis: { showgrid: false, zeroline: false },
+          yaxis: { showgrid: false, zeroline: false, scaleanchor: 'x' },
+          margin: { l: 48, r: 16, t: 8, b: 40 }
+        });
+        L.uirevision = ds.id + '|' + sel.value;
+        return { data: data, layout: L };
+      });
+    };
+    sel.addEventListener('change', draw);
+    setTimeout(draw, 0);
+    return card;
   }
   function nav(id) { activate(id, true); }
   function pickCol(T, cands) { for (var i = 0; i < cands.length; i++) if (T.cols.indexOf(cands[i]) >= 0) return cands[i]; return null; }
