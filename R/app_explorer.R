@@ -364,7 +364,10 @@ sparks_explorer_server <- function(id = "explorer", results_dir, object = NULL,
       .xp_start_job(rv, results_dir, obj_path(), use_bg, session)
       rv$last_id <- id
       shiny::updateSelectInput(session, "view_id", selected = id)
-      bslib::nav_select("views", "Analyses", session = session)
+      # BUG FIX: the navset id must be namespaced inside a module -- the bare
+      # "views" matched no element, so the auto-jump to the Analyses tab after
+      # submitting an analysis silently did nothing.
+      bslib::nav_select(ns("views"), "Analyses", session = session)
       id
     }
     shiny::observeEvent(input$run_de, {

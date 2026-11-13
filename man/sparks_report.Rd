@@ -49,12 +49,17 @@ never truncated).}
 Produces **one self-contained HTML file** that gathers every result of a
 pipeline run into tabs: an overview, QC (thresholds, input formats, cell
 retention, per-sample QC summaries, doublets, cell cycle / sex, Alevin
-barcode diagnostics), an interactive embedding explorer (lasso selection,
-colour by metadata or gene), gene violin and dot plots, markers /
-differential expression with a live volcano plot and per-group summaries,
-enrichment (GSEA, escape, skip diagnostics), composition and group sizes,
-every result table, the pipeline's figures, the file index and run
-information (configuration, diagnostics, log, session info).
+barcode diagnostics), a Clustering view (interactive elbow plot, PCA space,
+cluster UMAP with per-cluster legend toggles, cluster sizes), an interactive
+embedding explorer (lasso selection, colour by metadata, gene or per-cell
+pathway score), gene violin and dot plots, a Correlation view (gene-gene
+scatter with a least-squares fit, gene-gene correlation heatmaps, the
+pipeline's gene-set correlation tables), markers / differential expression
+with a live volcano plot and per-group summaries, enrichment (GSEA and
+per-cell Hallmark pathway-score projections on the embedding, escape, skip
+diagnostics), composition and group sizes, every result table, the
+pipeline's figures, the file index and run information (configuration,
+diagnostics, log, session info).
 }
 \details{
 The file needs no server, no network and no companion files: the page

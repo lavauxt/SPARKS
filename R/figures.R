@@ -350,7 +350,11 @@ sparks_fig_gsea <- function(gsea, top_n = 20L, mode = "light") {
   gsea <- gsea[is.finite(gsea$NES) & is.finite(gsea$padj), , drop = FALSE]
   if (!nrow(gsea)) return(NULL)
   strength <- tapply(abs(gsea$NES), gsea$pathway, max)
-  keep <- names(sort(strength, decreasing = TRUE))[seq_len(min(top_n, length(strength)))]
+  # BUG FIX: seq_len(min(top_n, 0)) would still index an empty vector and hand
+  # plotly an empty trace; bail out early when no pathway survived the filters.
+  if (!length(strength)) return(NULL)
+  top_n <- max(1L, min(as.integer(top_n), length(strength)))
+  keep <- names(sort(strength, decreasing = TRUE))[seq_len(top_n)]
   d <- gsea[gsea$pathway %in% keep, , drop = FALSE]
   d$pathway <- factor(d$pathway, levels = rev(keep))
   d$nlp <- -log10(pmax(d$padj, 1e-300))

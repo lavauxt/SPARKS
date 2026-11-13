@@ -3,12 +3,17 @@
 #' Produces **one self-contained HTML file** that gathers every result of a
 #' pipeline run into tabs: an overview, QC (thresholds, input formats, cell
 #' retention, per-sample QC summaries, doublets, cell cycle / sex, Alevin
-#' barcode diagnostics), an interactive embedding explorer (lasso selection,
-#' colour by metadata or gene), gene violin and dot plots, markers /
-#' differential expression with a live volcano plot and per-group summaries,
-#' enrichment (GSEA, escape, skip diagnostics), composition and group sizes,
-#' every result table, the pipeline's figures, the file index and run
-#' information (configuration, diagnostics, log, session info).
+#' barcode diagnostics), a Clustering view (interactive elbow plot, PCA space,
+#' cluster UMAP with per-cluster legend toggles, cluster sizes), an interactive
+#' embedding explorer (lasso selection, colour by metadata, gene or per-cell
+#' pathway score), gene violin and dot plots, a Correlation view (gene-gene
+#' scatter with a least-squares fit, gene-gene correlation heatmaps, the
+#' pipeline's gene-set correlation tables), markers / differential expression
+#' with a live volcano plot and per-group summaries, enrichment (GSEA and
+#' per-cell Hallmark pathway-score projections on the embedding, escape, skip
+#' diagnostics), composition and group sizes, every result table, the
+#' pipeline's figures, the file index and run information (configuration,
+#' diagnostics, log, session info).
 #'
 #' The file needs no server, no network and no companion files: the page
 #' styles and script are embedded in the package code, plotly.js is inlined
@@ -203,6 +208,136 @@ sparks_report <- function(results_dir,
        default = utils::head(unique(c(intersect(cfg_genes, genes), top)), 12L))
 }
 
+# ---- Per-dataset extras for the interactive tabs ---------------------------------
+#
+# These extend the panel (a down-sampled embedding + metadata + genes) with the
+# data behind the newer interactive cards:
+#   * `pca`            -> the Clustering tab's elbow plot (stdev, % variance,
+#                         cumulative %, the dims the run actually used)
+#   * `pcs`            -> per-cell PC1 / PC2 for the PCA scatter
+#   * escape assays    -> per-cell Hallmark pathway scores (the Enrichment
+#                         tab's per-cell score UMAP)
+#   * `corr`           -> a gene x gene correlation matrix over the embedded
+#                         genes (the Correlation tab's heatmap)
+
+#' Elbow-plot data from the PCA reduction
+#' @param obj A Seurat object.
+#' @param cfg The run configuration (bundle$config).
+#' @return List with dims / stdev / var_pct / cum_var arrays and the dims used,
+#'   or NULL when the object has no usable PCA.
+#' @keywords internal
+.report_pca_data <- function(obj, cfg) {
+  if (!"pca" %in% names(obj@reductions)) return(NULL)
+  sd <- tryCatch(as.numeric(SeuratObject::Stdev(obj[["pca"]])),
+                 error = function(e) numeric())
+  sd <- sd[is.finite(sd)]
+  if (length(sd) < 2L) return(NULL)
+  n <- length(sd)
+  var_pct <- sd^2 / sum(sd^2) * 100
+  # config_used.yaml round-trips pca_dims as a YAML sequence (a plain list), so
+  # flatten before coercing.
+  dims_raw <- cfg$processing$pca_dims %||%
+    seq.int(cfg$processing$pca_dims_from %||% 1L, cfg$processing$pca_dims_to %||% 20L)
+  dims_cfg <- suppressWarnings(as.integer(unlist(dims_raw, use.names = FALSE)))
+  used <- unique(dims_cfg[is.finite(dims_cfg) & dims_cfg >= 1L & dims_cfg <= n])
+  list(
+    dims     = .arr(seq_len(n)),
+    stdev    = .arr(round(sd, 4L)),
+    var_pct  = .arr(round(var_pct, 3L)),
+    cum_var  = .arr(round(cumsum(var_pct), 2L)),
+    used_from = if (length(used)) as.integer(min(used)) else NULL,
+    used_to   = if (length(used)) as.integer(max(used)) else NULL,
+    used_var_pct = if (length(used)) round(sum(var_pct[used]), 2L) else NULL,
+    # The clustering / UMAP may be built on Harmony-corrected dimensions; say
+    # so, because the elbow (computed on raw PCA) is then only indicative.
+    cluster_reduction = if ("integrated.dr" %in% names(obj@reductions))
+      "integrated.dr" else "pca"
+  )
+}
+
+#' PC1 / PC2 coordinates of the panel cells
+#' @param obj A Seurat object.
+#' @param panel A [sparks_panel()].
+#' @return List with pc1 / pc2 arrays aligned with the panel cells, or NULL.
+#' @keywords internal
+.report_panel_pcs <- function(obj, panel) {
+  if (!"pca" %in% names(obj@reductions)) return(NULL)
+  emb <- tryCatch(SeuratObject::Embeddings(obj, reduction = "pca"),
+                  error = function(e) NULL)
+  if (is.null(emb) || ncol(emb) < 2L) return(NULL)
+  idx <- intersect(panel$cells, rownames(emb))
+  if (!length(idx)) return(NULL)
+  list(
+    pc1 = .arr(round(emb[idx, 1L], 3L)),
+    pc2 = .arr(round(emb[idx, 2L], 3L))
+  )
+}
+
+#' Add per-cell escape pathway scores (e.g. MSigDB Hallmark) to the panel
+#'
+#' Every `escape.*` assay contributes up to \code{max_pathways} numeric
+#' metadata columns named \code{"<PATHWAY> [<method>]"}. Pathways are ranked by
+#' score variance (constant scores carry no signal) so the most informative
+#' ones are embedded when the cap bites.
+#' @param obj A Seurat object.
+#' @param panel A [sparks_panel()].
+#' @param max_pathways Cap per assay.
+#' @return List with \code{panel} (extended) and \code{cols} (new column names).
+#' @keywords internal
+.report_escape_columns <- function(obj, panel, max_pathways = 12L) {
+  assays <- grep("^escape\\.", names(obj@assays), value = TRUE)
+  cols <- character()
+  for (a in assays) {
+    if (length(cols) >= max_pathways * length(assays)) break
+    mat <- tryCatch(SeuratObject::LayerData(obj, assay = a, layer = "data"),
+                    error = function(e) NULL)
+    if (is.null(mat) || !nrow(mat) || !ncol(mat)) next
+    keep <- intersect(colnames(mat), panel$cells)
+    if (!length(keep)) next
+    vals <- suppressWarnings(tryCatch(as.matrix(mat[, keep, drop = FALSE]),
+                                      error = function(e) NULL))
+    if (is.null(vals)) next
+    vv <- apply(vals, 1L, function(x) {
+      x <- x[is.finite(x)]
+      if (length(x) < 2L) 0 else stats::var(x)
+    })
+    if (!length(vv)) next
+    sorted <- sort(vv, decreasing = TRUE, na.last = TRUE)
+    top <- utils::head(names(sorted)[!is.na(sorted)], max_pathways)
+    method <- sub("^escape[.]", "", a)
+    for (pw in top) {
+      col <- paste0(pw, " [", method, "]")
+      if (col %in% names(panel$meta)) next
+      v <- signif(as.numeric(vals[pw, keep]), 3L)
+      names(v) <- keep
+      panel <- sparks_panel_add_meta(panel, col, v)
+      cols <- c(cols, col)
+    }
+  }
+  list(panel = panel, cols = cols)
+}
+
+#' Gene x gene correlation matrix over the panel's embedded genes
+#' @param panel A [sparks_panel()].
+#' @param max_genes Cap on the number of genes (keeps the JSON small).
+#' @return List with \code{genes} and \code{values} (row-major matrix), or NULL.
+#' @keywords internal
+.report_gene_corr <- function(panel, max_genes = 40L) {
+  genes <- utils::head(names(panel$genes), max_genes)
+  if (length(genes) < 2L) return(NULL)
+  n <- length(panel$cells)
+  m <- matrix(0, nrow = n, ncol = length(genes))
+  for (j in seq_along(genes)) {
+    g <- panel$genes[[genes[[j]]]]
+    if (length(g$i)) m[g$i + 1L, j] <- g$v
+  }
+  cors <- suppressWarnings(stats::cor(m))
+  cors[!is.finite(cors)] <- 0
+  diag(cors) <- 1
+  list(genes = .arr(genes),
+       values = lapply(seq_len(nrow(cors)), function(i) .arr(unname(round(cors[i, ], 2L)))))
+}
+
 .report_datasets <- function(bundle, max_cells, max_genes, say) {
   objs <- .discover_result_objects(bundle)
   out <- list(); sample_counts <- list(); n_genes <- NA_integer_; clusters <- NA_integer_
@@ -219,6 +354,12 @@ sparks_report <- function(results_dir,
         max_genes = max_genes),
       error = function(e) { say("  no panel (", conditionMessage(e), ")"); NULL })
     if (is.null(panel)) next
+    # Per-cell Hallmark / escape pathway scores become numeric metadata columns
+    # (see .report_escape_columns()); they feed the Enrichment tab's per-cell
+    # score UMAP and appear in the Embedding tab's colour-by menu.
+    esc <- tryCatch(.report_escape_columns(obj, panel), error = function(e) NULL)
+    if (!is.null(esc)) panel <- esc$panel
+    pathway_cols <- if (!is.null(esc)) esc$cols else character()
     meta <- obj[[]]
     if (objs$kind[[i]] == "merged") {
       if ("orig.ident" %in% colnames(meta)) {
@@ -232,11 +373,19 @@ sparks_report <- function(results_dir,
       }
     }
     id <- paste0("ds", length(out) + 1L)
+    pca <- tryCatch(.report_pca_data(obj, bundle$config), error = function(e) NULL)
+    corr <- tryCatch(.report_gene_corr(panel), error = function(e) NULL)
     head <- list(
       id = id, label = objs$label[[i]], kind = objs$kind[[i]],
       comparison = objs$comparison[[i]], n_total = panel$n_total,
       n_cells = length(panel$cells), reduction = panel$reduction,
       n_genes_embedded = length(panel$genes),
+      # Heads stay in the always-parsed index: keep them small. The elbow
+      # summary and the pathway-column *names* go here; scores, PC coordinates
+      # and the correlation matrix live in the lazily-decoded body blob.
+      pca = pca,
+      pathway_cols = .arr(pathway_cols),
+      n_corr_genes = if (!is.null(corr)) length(corr$genes) else 0L,
       facts = .report_facts(obj, panel)
     )
     body <- list(
@@ -246,10 +395,12 @@ sparks_report <- function(results_dir,
         else list(type = "num", values = .arr(m$values))
       }),
       genes = lapply(panel$genes, function(g) list(i = .arr(g$i), v = .arr(g$v))),
-      default_genes = .arr(pick$default)
+      default_genes = .arr(pick$default),
+      pcs = tryCatch(.report_panel_pcs(obj, panel), error = function(e) NULL),
+      corr = corr
     )
     out[[length(out) + 1L]] <- list(head = head, body = body)
-    rm(obj, panel, meta); invisible(gc(FALSE))
+    rm(obj, panel, meta, pca, corr); invisible(gc(FALSE))
   }
   sc <- if (length(sample_counts)) {
     s <- do.call(rbind, sample_counts)
@@ -511,11 +662,16 @@ sparks_report <- function(results_dir,
     for (i in seq_len(nrow(gsea_groups))) {
       cmp <- gsea_groups$comparison[[i]]
       grp <- gsea_groups$grouping[[i]]
-      # Match the (merged) dataset for this comparison.
+      # BUG FIX: only merged datasets were considered, so a GSEA table computed
+      # inside a subset (its own embedding, its own grouping) silently produced
+      # no projection figure. Match any dataset of this comparison, preferring
+      # the merged one (it carries the full-panel embedding).
       ds_idx <- which(vapply(datasets$datasets, function(d)
-        identical(d$head$kind, "merged") && identical(d$head$comparison, cmp),
-        logical(1)))[1L]
-      if (is.na(ds_idx)) next
+        identical(d$head$comparison, cmp), logical(1)))
+      if (!length(ds_idx)) next
+      ds_merged <- which(vapply(datasets$datasets[ds_idx], function(d)
+        identical(d$head$kind, "merged"), logical(1)))
+      ds_idx <- if (length(ds_merged)) ds_idx[[ds_merged[[1L]]]] else ds_idx[[1L]]
       gsea <- sparks_table(bundle, "gsea", comparison = cmp, grouping = grp)
       if (!nrow(gsea) || !all(c("pathway", "group", "NES") %in% names(gsea))) next
       gsea$NES <- suppressWarnings(as.numeric(gsea$NES))
@@ -546,6 +702,102 @@ sparks_report <- function(results_dir,
         ))
       )
     }
+  }
+
+  # ---- Interactive per-cell pathway-score projections ----------------------------
+  # Escape assays (e.g. MSigDB Hallmark scored per cell with UCell / AUCell)
+  # were embedded into the dataset panels as numeric columns; one client-side
+  # card per dataset colours the embedding by the chosen pathway's per-cell
+  # score. Unlike the group-NES projection above, every cell carries its own
+  # value -- the closest analogue of Loupe's colour-by-gene feature for
+  # pathways. Nothing is drawn here: the client reads ds.meta directly.
+  for (i in seq_along(datasets$datasets)) {
+    pw_cols <- datasets$datasets[[i]]$head$pathway_cols
+    if (!length(pw_cols)) next
+    figs[[length(figs) + 1L]] <- list(
+      id = paste0("f", length(figs) + 1L),
+      tab = "enrichment",
+      kind = "escape_projection",
+      title = "Pathway scores on the embedding (per cell)",
+      group = datasets$datasets[[i]]$head$label,
+      dataset_index = i - 1L,
+      pathways = .arr(pw_cols)
+    )
+  }
+
+  # ---- Interactive correlation-table heatmaps -------------------------------------
+  # The pipeline's Correlations_*.tsv tables (gene set X vs gene set Y,
+  # globally and per group x condition) become one client-side card per
+  # (comparison, unit, grouping): a method dropdown (Pearson / Spearman) and a
+  # group dropdown (Global + every cluster x condition with enough cells).
+  corr_groups <- unique(cat[cat$kind == "correlation",
+                            c("comparison", "unit", "grouping")])
+  for (i in seq_len(nrow(corr_groups))) {
+    g <- corr_groups[i, ]
+    rows <- cat$kind == "correlation" &
+      cat$comparison %in% g$comparison & cat$unit %in% g$unit &
+      cat$grouping %in% g$grouping
+    files <- cat[rows, , drop = FALSE]
+    if (!nrow(files)) next
+    # File name: Correlations_<method>_<prefix>_<scope>.tsv, scope = global / by_group.
+    scope <- ifelse(grepl("_global\\.(tsv|txt|csv)$", files$name), "global", "by_group")
+    frames <- lapply(which(scope == "global"), function(j) {
+      df <- .read_result_table(files$path[[j]])
+      if (nrow(df)) df$.scope <- "Global (all cells)"
+      df
+    })
+    frames <- c(frames, lapply(which(scope == "by_group"), function(j) {
+      df <- .read_result_table(files$path[[j]])
+      if (nrow(df) && all(c("Cluster", "Condition") %in% names(df))) {
+        df$.scope <- paste(as.character(df$Cluster), as.character(df$Condition), sep = " | ")
+      }
+      df
+    }))
+    frames <- Filter(function(f) is.data.frame(f) && nrow(f) &&
+                       all(c("Gene_X", "Gene_Y", "Correlation") %in% names(f)), frames)
+    if (!length(frames)) next
+    df <- .rbind_fill(frames)
+    df$Correlation <- suppressWarnings(as.numeric(df$Correlation))
+    df <- df[is.finite(df$Correlation), , drop = FALSE]
+    if (!nrow(df)) next
+    methods <- if ("Method" %in% names(df)) unique(as.character(df$Method)) else "correlation"
+    scopes <- unique(as.character(df$.scope))
+    # One square-ish matrix per (method, scope); genes sorted so the dropdown
+    # order is stable across scopes of the same method.
+    payload <- lapply(methods, function(m) {
+      dm <- df[if ("Method" %in% names(df)) as.character(df$Method) %in% m else TRUE, , drop = FALSE]
+      gene_x <- sort(unique(as.character(dm$Gene_X)))
+      gene_y <- sort(unique(as.character(dm$Gene_Y)))
+      scs <- lapply(scopes, function(s) {
+        ds <- dm[as.character(dm$.scope) == s, , drop = FALSE]
+        mat <- if (!nrow(ds)) {
+          matrix(NA_real_, length(gene_x), length(gene_y),
+                 dimnames = list(gene_x, gene_y))
+        } else {
+          m2 <- tapply(ds$Correlation, list(ds$Gene_X, ds$Gene_Y), mean)
+          miss_x <- setdiff(gene_x, rownames(m2)); miss_y <- setdiff(gene_y, colnames(m2))
+          if (length(miss_x) || length(miss_y)) {
+            pad <- matrix(NA_real_, nrow(m2) + length(miss_x), ncol(m2) + length(miss_y),
+                          dimnames = list(c(rownames(m2), miss_x), c(colnames(m2), miss_y)))
+            pad[rownames(m2), colnames(m2)] <- m2
+            m2 <- pad
+          }
+          m2[gene_x, gene_y, drop = FALSE]
+        }
+        list(scope = s, values = lapply(seq_len(nrow(mat)), function(k)
+          .arr(unname(round(mat[k, ], 3L)))))
+      })
+      list(method = m, genes_x = .arr(gene_x), genes_y = .arr(gene_y), scopes = scs)
+    })
+    figs[[length(figs) + 1L]] <- list(
+      id = paste0("f", length(figs) + 1L),
+      tab = "correlation",
+      kind = "corr_table_heatmap",
+      title = "Gene-gene correlations (pipeline tables)",
+      group = paste(stats::na.omit(c(g$comparison, g$unit, g$grouping)), collapse = " / "),
+      methods = lapply(payload, function(p) p$method),
+      data = payload
+    )
   }
 
   say("built ", length(figs), " figures")

@@ -662,6 +662,285 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
     });
   }
 
+  // ---- Clustering & correlation builders ---------------------------------------------
+  // Interactive elbow plot: stdev of each PC, cumulative variance on a second
+  // axis, and a shaded band over the dims the run actually used for clustering.
+  function elbowPlot(div, pca, o) {
+    o = o || {};
+    plot(div, function (t) {
+      var c = CHROME[t];
+      var n = pca.dims.length;
+      var hover = pca.dims.map(function (dm, i) {
+        return 'PC ' + dm + '<br>stdev ' + fmt(pca.stdev[i]) +
+               '<br>variance ' + fmt(pca.var_pct[i]) + '%<br>cumulative ' + fmt(pca.cum_var[i]) + '%';
+      });
+      var traces = [{
+        type: 'scatter', mode: 'lines+markers', x: pca.dims, y: pca.stdev,
+        name: 'Stdev', text: hover, hoverinfo: 'text',
+        line: { color: CAT[t][0], width: 2 }, marker: { size: 5, color: CAT[t][0] }
+      }];
+      if (o.showCum !== false) {
+        traces.push({
+          type: 'scatter', mode: 'lines', x: pca.dims, y: pca.cum_var, yaxis: 'y2',
+          name: 'Cumulative variance (%)', text: hover, hoverinfo: 'text',
+          line: { color: CAT[t][2], width: 1.5, dash: 'dot' }
+        });
+      }
+      var shapes = [];
+      if (o.used_from && o.used_to) {
+        shapes.push({
+          type: 'rect', x0: o.used_from - 0.5, x1: o.used_to + 0.5, yref: 'paper', y0: 0, y1: 1,
+          fillcolor: t === 'light' ? 'rgba(42,120,214,0.10)' : 'rgba(57,135,229,0.18)',
+          line: { width: 0 }
+        });
+      }
+      var anns = [];
+      if (o.used_from && o.used_to) {
+        anns.push({
+          x: o.used_to, y: 1, yref: 'paper', xanchor: 'center', yanchor: 'bottom', showarrow: false,
+          text: 'dims used: ' + o.used_from + '-' + o.used_to +
+                (o.used_var_pct !== undefined && o.used_var_pct !== null ? ' (' + fmt(o.used_var_pct) + '% of var.)' : ''),
+          font: { size: 11, color: c.secondary }
+        });
+      }
+      var L = baseLayout(t, {
+        xlab: 'Principal component', ylab: 'Standard deviation',
+        legend: o.showCum !== false, annotations: anns, shapes: shapes,
+        xaxis: { tickmode: 'linear', dtick: n > 40 ? 5 : (n > 20 ? 2 : 1) },
+        margin: { l: 56, r: 20, t: 20, b: 48 }
+      });
+      if (o.showCum !== false) L.yaxis2 = {
+        title: { text: 'Cumulative variance (%)', font: { color: c.secondary } },
+        gridcolor: c.grid, overlaying: 'y', side: 'right', tickfont: { color: c.muted },
+        rangemode: 'tozero', automargin: true
+      };
+      return { data: traces, layout: L };
+    });
+  }
+
+  // PCA space (PC1 x PC2) coloured by a categorical column. PC coordinates are
+  // down-sampled with the panel cells, like the embedding.
+  function pcaScatter(div, d, o) {
+    o = o || {};
+    var m = o.color && d.meta[o.color] ? d.meta[o.color] : null;
+    plot(div, function (t) {
+      var levels = m ? m.levels : ['All cells'], cols = catColors(levels.length, t);
+      var pcs = d.pcs || { pc1: [], pc2: [] };
+      var tr = levels.map(function () { return { x: [], y: [], c: [] }; });
+      for (var i = 0; i < pcs.pc1.length; i++) {
+        if (!isFinite(pcs.pc1[i]) || !isFinite(pcs.pc2[i])) continue;
+        var k = m ? m.codes[i] : 0;
+        if (k === null || k === undefined) continue;
+        tr[k].x.push(pcs.pc1[i]); tr[k].y.push(pcs.pc2[i]); tr[k].c.push(d.cells[i]);
+      }
+      var type = pcs.pc1.length > 8000 ? 'scattergl' : 'scatter';
+      return {
+        data: levels.map(function (lv, k) {
+          if (!tr[k].x.length) return { type: 'scatter', mode: 'markers', x: [], y: [], name: lv };
+          return {
+            type: type, mode: 'markers', name: lv, x: tr[k].x, y: tr[k].y,
+            customdata: tr[k].c, hovertemplate: '%{customdata}<br>' + lv +
+              '<br>PC1 %{x}<br>PC2 %{y}<extra></extra>',
+            marker: { color: cols[k], size: 4, opacity: 0.7 }
+          };
+        }),
+        layout: baseLayout(t, { xlab: 'PC 1', ylab: 'PC 2', legend: levels.length > 1 && levels.length <= 40,
+          xaxis: { showgrid: false, zeroline: false }, yaxis: { showgrid: false, zeroline: false, scaleanchor: 'x' },
+          margin: { l: 48, r: 16, t: 8, b: 40 } })
+      };
+    });
+  }
+
+  // Cluster overview UMAP: direct labels at centroids, an HTML legend with
+  // toggle buttons (the Loupe "clusters" view pattern) and a small selection
+  // readout so lasso sweeps give instant feedback.
+  function clusterUmap(div, legendHost, selHost, d, clusterCol) {
+    var m = d.meta[clusterCol];
+    if (!m || m.type !== 'cat') { showNote(div, 'Column "' + clusterCol + '" is not categorical.'); return; }
+    var hidden = {};
+    function renderSel(cnt) {
+      if (!selHost) return;
+      clear(selHost);
+      if (!cnt) {
+        selHost.appendChild(h('p', { class: 'note', text: 'Lasso-select cells here for a quick count; use the Embedding tab for the full selection breakdown.' }));
+      } else {
+        selHost.appendChild(h('p', null, h('strong', { text: fmtInt(cnt) }), ' cells selected (' + (100 * cnt / d.cells.length).toFixed(1) + '%)'));
+      }
+    }
+    function draw() {
+      var lv = m.levels, codes = m.codes, n = d.cells.length;
+      renderLegend(lv);
+      plot(div, function (t) {
+        var cols = catColors(lv.length, t);
+        var type = n > 8000 ? 'scattergl' : 'scatter';
+        var ord = range(n);
+        var marker = {
+          size: 4, opacity: ord.map(function (i) { return hidden[lv[codes[i]]] ? 0.04 : 0.8; }),
+          color: ord.map(function (i) { return cols[codes[i]]; })
+        };
+        var text = ord.map(function (i) { return d.cells[i] + '<br>' + clusterCol + ': ' + lv[codes[i]]; });
+        // Direct labels at cluster medians (identity never rests on colour alone).
+        var xs = lv.map(function () { return []; }), ys = lv.map(function () { return []; });
+        for (var i = 0; i < n; i++) { xs[codes[i]].push(d.x[i]); ys[codes[i]].push(d.y[i]); }
+        var c = CHROME[t], anns = [];
+        lv.forEach(function (name, k) {
+          if (hidden[name] || !xs[k].length) return;
+          anns.push({ x: median(xs[k]), y: median(ys[k]), text: name, showarrow: false,
+            font: { size: 11, color: c.text },
+            bgcolor: t === 'light' ? 'rgba(252,252,251,0.7)' : 'rgba(26,26,25,0.7)' });
+        });
+        var L = baseLayout(t, {
+          xlab: d.reduction.toUpperCase() + ' 1', ylab: d.reduction.toUpperCase() + ' 2',
+          legend: false, dragmode: 'lasso', annotations: anns,
+          xaxis: { showgrid: false, zeroline: false },
+          yaxis: { showgrid: false, zeroline: false, scaleanchor: 'x' },
+          margin: { l: 48, r: 16, t: 8, b: 40 }
+        });
+        L.uirevision = d.id + '|clusterview';
+        return { data: [{ type: type, mode: 'markers', x: ord.map(function (i) { return d.x[i]; }),
+          y: ord.map(function (i) { return d.y[i]; }), customdata: ord, text: text, hoverinfo: 'text',
+          marker: marker, selected: { marker: { opacity: 1 } }, unselected: { marker: { opacity: 0.12 } } }],
+          layout: L };
+      });
+    }
+    function renderLegend(lv) {
+      clear(legendHost);
+      var cols = catColors(lv.length, resolved());
+      lv.forEach(function (name, k) {
+        legendHost.appendChild(h('button', { type: 'button', 'aria-pressed': hidden[name] ? 'false' : 'true',
+          title: 'Toggle ' + name,
+          onclick: function () { hidden[name] = !hidden[name]; draw(); } },
+          h('span', { class: 'swatch', style: { background: cols[k] } }), name));
+      });
+    }
+    // Bind the selection handlers *after* the first draw: a bare div only
+    // gains .on() once plotly has rendered into it (same pattern as the
+    // Embedding tab).
+    draw();
+    if (!div._bound && div.on) {
+      var cnt = 0;
+      div.on('plotly_selected', function (ev) { cnt = ev && ev.points ? ev.points.length : 0; renderSel(cnt); });
+      div.on('plotly_deselect', function () { cnt = 0; renderSel(0); });
+      div._bound = true;
+      renderSel(0);
+    }
+  }
+
+  // Horizontal bars of cells per group (exact counts from the run's facts when
+  // available, panel counts otherwise).
+  function groupSizeBars(div, d, col) {
+    var facts = (d.facts && d.facts.counts && d.facts.counts[col]) || null;
+    var labels, values, exact;
+    if (facts) { labels = facts.levels.slice(); values = facts.counts.slice(); exact = true; }
+    else {
+      var m = d.meta[col];
+      if (!m || m.type !== 'cat') { showNote(div, 'No "' + col + '" column.'); return; }
+      labels = m.levels; values = m.levels.map(function () { return 0; });
+      for (var i = 0; i < d.cells.length; i++) { var k = m.codes[i]; if (k !== null && k !== undefined) values[k]++; }
+      exact = false;
+    }
+    var order = values.map(function (v, i) { return i; })
+      .sort(function (a, b) { return values[b] - values[a]; }).slice(0, 40).reverse();
+    plot(div, function (t) {
+      var cols = catColors(labels.length, t);
+      return {
+        data: [{
+          type: 'bar', orientation: 'h',
+          x: order.map(function (i) { return values[i]; }),
+          y: order.map(function (i) { return String(labels[i]); }),
+          marker: { color: order.map(function (i) { return cols[i]; }) },
+          hovertemplate: '%{y}: %{x:,} cells<extra></extra>'
+        }],
+        layout: baseLayout(t, { xlab: 'Cells', legend: false,
+          yaxis: { type: 'category', automargin: true },
+          margin: { l: 90, r: 16, t: 8, b: 48 } })
+      };
+    });
+    return { exact: exact };
+  }
+
+  // Gene x gene scatter with a least-squares fit line and the Pearson r.
+  function corrScatter(div, d, o) {
+    o = o || {};
+    var gx = geneVec(d, o.x), gy = geneVec(d, o.y);
+    var m = o.color && d.meta[o.color] ? d.meta[o.color] : null;
+    plot(div, function (t) {
+      var levels = m ? m.levels : ['All cells'], cols = catColors(levels.length, t);
+      var tr = levels.map(function () { return { x: [], y: [], c: [] }; });
+      var sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, n = 0;
+      for (var i = 0; i < d.cells.length; i++) {
+        var xv = gx[i], yv = gy[i];
+        if (!isFinite(xv) || !isFinite(yv)) continue;
+        var k = m ? m.codes[i] : 0;
+        if (k === null || k === undefined) continue;
+        tr[k].x.push(xv); tr[k].y.push(yv); tr[k].c.push(d.cells[i]);
+        sx += xv; sy += yv; sxx += xv * xv; syy += yv * yv; sxy += xv * yv; n++;
+      }
+      var r = null, slope = null, icept = null;
+      if (n > 2) {
+        var cov = sxy / n - (sx / n) * (sy / n);
+        var vx = sxx / n - (sx / n) * (sx / n), vy = syy / n - (sy / n) * (sy / n);
+        if (vx > 0 && vy > 0) {
+          r = cov / Math.sqrt(vx * vy);
+          slope = cov / vx; icept = sy / n - slope * (sx / n);
+        }
+      }
+      var type = d.cells.length > 4000 ? 'scattergl' : 'scatter';
+      var data = levels.map(function (lv, k) {
+        if (!tr[k].x.length) return { type: 'scatter', mode: 'markers', x: [], y: [], name: lv };
+        return {
+          type: type, mode: 'markers', name: lv, x: tr[k].x, y: tr[k].y,
+          customdata: tr[k].c, hovertemplate: '%{customdata}<br>' + o.x + ' %{x:.2f}<br>' + o.y + ' %{y:.2f}<extra></extra>',
+          marker: { color: cols[k], size: 4, opacity: 0.6 }
+        };
+      });
+      if (slope !== null) {
+        var flat = tr.reduce(function (a, s) { return a.concat(s.x); }, []);
+        if (flat.length) {
+          var xmin = Math.min.apply(null, flat), xmax = Math.max.apply(null, flat);
+          data.push({
+            type: 'scatter', mode: 'lines', x: [xmin, xmax],
+            y: [icept + slope * xmin, icept + slope * xmax],
+            name: 'OLS fit', hoverinfo: 'skip', showlegend: false,
+            line: { color: CHROME[t].text, width: 1.5, dash: 'dash' }
+          });
+        }
+      }
+      var anns = [];
+      if (r !== null) {
+        anns.push({ x: 0, xref: 'paper', y: 1, yref: 'paper', xanchor: 'left', yanchor: 'bottom',
+          showarrow: false, text: 'Pearson r = ' + r.toFixed(3) + ' (n = ' + fmtInt(n) + ' cells)',
+          font: { size: 11, color: CHROME[t].secondary } });
+      }
+      return {
+        data: data,
+        layout: baseLayout(t, { xlab: o.x, ylab: o.y, legend: levels.length > 1 && levels.length <= 30,
+          annotations: anns })
+      };
+    });
+  }
+
+  // Gene-gene correlation heatmap over the genes embedded in the report.
+  function corrMatrix(div, corr) {
+    plot(div, function (t) {
+      var c = CHROME[t];
+      return {
+        data: [{
+          type: 'heatmap', z: corr.values, x: corr.genes, y: corr.genes,
+          zmin: -1, zmax: 1,
+          colorscale: [[0, DIV[4]], [0.25, DIV[3]], [0.5, c.mid], [0.75, DIV[1]], [1, DIV[0]]],
+          colorbar: { title: { text: 'r' }, thickness: 10, len: 0.6 },
+          xgap: 1, ygap: 1,
+          hovertemplate: '%{y} \u00d7 %{x}<br>r = %{z}<extra></extra>'
+        }],
+        layout: baseLayout(t, { legend: false,
+          xaxis: { type: 'category', automargin: true, tickangle: 45 },
+          yaxis: { type: 'category', autorange: 'reversed', automargin: true },
+          margin: { l: 110, r: 16, t: 8, b: 110 } })
+      };
+    });
+  }
+
   // ------------------------------------------------------------------ tabs
   var TABS = [];
   function tab(id, label, available, build) { TABS.push({ id: id, label: label, available: available, build: build, built: false }); }
@@ -671,13 +950,21 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
   function tablesOfKind(kinds) { return DATA.tables.filter(function (t) { return kinds.indexOf(t.kind) >= 0; }); }
   function figuresOf(tabId, group) { return DATA.figures.filter(function (f) { return f.tab === tabId && (group === undefined || (f.group || '') === group); }); }
     // Cards for a list of figure specs. Recognised kinds:
-  //   * default          -> a pre-built plotly spec (`f.spec`)
-  //   * gsea_projection  -> an interactive embedding coloured by group-level
-  //                         NES, with a pathway selector; drawn client-side
-  //                         from DATA.datasets + f.by_pathway (no PNG, no server).
+  //   * default            -> a pre-built plotly spec (`f.spec`)
+  //   * gsea_projection    -> an interactive embedding coloured by group-level
+  //                           NES, with a pathway selector; drawn client-side
+  //                           from DATA.datasets + f.by_pathway (no PNG, no server).
+  //   * escape_projection  -> an interactive embedding coloured by the *per-cell*
+  //                           score of a pathway (escape.UCell / escape.AUCell
+  //                           assays embedded as numeric metadata), with a
+  //                           pathway selector.
+  //   * corr_table_heatmap -> the pipeline's Correlations_*.tsv tables as
+  //                           interactive heatmaps (method + group selectors).
   function figureCards(figs, cls) {
     return figs.map(function (f) {
       if (f.kind === 'gsea_projection') return gseaProjectionCard(f, cls);
+      if (f.kind === 'escape_projection') return escapeProjectionCard(f, cls);
+      if (f.kind === 'corr_table_heatmap') return corrTableCard(f, cls);
       var box = plotBox(cls || '');
       var c = card(f.title, f.group || '', box);
       setTimeout(function () { specPlot(box, f.spec); }, 0);
@@ -759,6 +1046,127 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
     setTimeout(draw, 0);
     return card;
   }
+
+  // Interactive per-cell pathway-score projection: a UMAP whose cells are
+  // coloured by the score the escape assay assigned to *that cell* (MSigDB
+  // Hallmark sets scored with UCell / AUCell and embedded as numeric panel
+  // columns). This is the per-cell analogue of gseaProjectionCard above (which
+  // paints every cell of a group with the group's NES) and the pathway
+  // counterpart of the Embedding tab's colour-by-gene.
+  function escapeProjectionCard(f, cls) {
+    var shortName = function (p) { return p.replace(/^HALLMARK_/, '').replace(/\s*\[[^\]]*\]\s*$/, ''); };
+    var sel = h('select', { 'aria-label': 'Pathway' },
+      f.pathways.map(function (p) { return h('option', { value: p, text: shortName(p) }); }));
+    var box = plotBox(cls || 'tall');
+    var card = h('section', { class: 'card' },
+      h('header', null,
+        h('h3', { text: f.title }),
+        h('span', { class: 'muted small hint', text: (f.group || '') + ' - per-cell pathway scores, colour = low to high' })),
+      h('div', { class: 'toolbar' }, h('label', { class: 'field' }, 'Pathway', sel)),
+      box);
+    var draw = function () {
+      var ds = dsAt(f.dataset_index);
+      var col = sel.value;
+      if (!ds.meta[col]) { showNote(box, 'Pathway scores for "' + col + '" are not embedded in this report.'); return; }
+      var v = numVec(ds, col), n = ds.cells.length;
+      var fin = v.filter(function (x) { return isFinite(x); });
+      if (!fin.length) { showNote(box, 'All scores are missing for this pathway.'); return; }
+      var zmin = Math.min.apply(null, fin), zmax = Math.max.apply(null, fin);
+      if (zmax - zmin < 1e-9) { zmax = zmin + 1; }
+      plot(box, function (t) {
+        var type = n > 8000 ? 'scattergl' : 'scatter';
+        var text = ds.cells.map(function (cname, i) {
+          return cname + '<br>' + col + ': ' + (isFinite(v[i]) ? fmt(v[i]) : 'NA');
+        });
+        var data = [{
+          type: type, mode: 'markers', x: ds.x, y: ds.y, customdata: ds.cells,
+          text: text, hoverinfo: 'text',
+          marker: {
+            size: 4, opacity: 0.85,
+            color: Array.prototype.map.call(v, function (x) { return isFinite(x) ? x : null; }),
+            cmin: zmin, cmax: zmax, colorscale: SEQ_SCALE,
+            colorbar: { title: { text: 'Score' }, thickness: 10, len: 0.6 }
+          }
+        }];
+        var L = baseLayout(t, {
+          xlab: ds.reduction.toUpperCase() + ' 1',
+          ylab: ds.reduction.toUpperCase() + ' 2',
+          legend: false, dragmode: 'lasso',
+          xaxis: { showgrid: false, zeroline: false },
+          yaxis: { showgrid: false, zeroline: false, scaleanchor: 'x' },
+          margin: { l: 48, r: 16, t: 8, b: 40 }
+        });
+        L.uirevision = ds.id + '|escape|' + col;
+        return { data: data, layout: L };
+      });
+    };
+    sel.addEventListener('change', draw);
+    setTimeout(draw, 0);
+    return card;
+  }
+
+  // Interactive heatmaps built from the pipeline's Correlations_*.tsv tables
+  // (gene set X vs gene set Y, globally and per group x condition). One card
+  // per (comparison, unit, grouping); a method dropdown (Pearson / Spearman)
+  // and a scope dropdown (Global + each cluster | condition) pick the matrix.
+  function corrTableCard(f, cls) {
+    var methods = f.methods || (f.data || []).map(function (m) { return m.method; });
+    var mSel = h('select', { 'aria-label': 'Method' },
+      methods.map(function (m, i) { return h('option', { value: i, text: m }); }));
+    var sSel = h('select', { 'aria-label': 'Group' });
+    var box = plotBox(cls || 'tall');
+    var card = h('section', { class: 'card' },
+      h('header', null,
+        h('h3', { text: f.title }),
+        h('span', { class: 'muted small hint', text: f.group || '' })),
+      h('div', { class: 'toolbar' },
+        h('label', { class: 'field' }, 'Method', mSel),
+        h('label', { class: 'field' }, 'Group', sSel)),
+      box);
+    function current() {
+      var m = (f.data || [])[+mSel.value];
+      return m && m.scopes && m.scopes[+sSel.value] ? m : null;
+    }
+    var draw = function () {
+      var m = current();
+      if (!m) { showNote(box, 'No correlation matrix available.'); return; }
+      var sc = m.scopes[+sSel.value];
+      plot(box, function (t) {
+        var c = CHROME[t];
+        return {
+          data: [{
+            type: 'heatmap', z: sc.values, x: m.genes_y, y: m.genes_x,
+            zmin: -1, zmax: 1,
+            colorscale: [[0, DIV[4]], [0.25, DIV[3]], [0.5, c.mid], [0.75, DIV[1]], [1, DIV[0]]],
+            colorbar: { title: { text: 'r' }, thickness: 10, len: 0.6 },
+            xgap: 1, ygap: 1,
+            hovertemplate: '%{y} \u00d7 %{x}<br>r = %{z}<extra></extra>'
+          }],
+          layout: baseLayout(t, {
+            legend: false,
+            xaxis: { type: 'category', automargin: true },
+            yaxis: { type: 'category', autorange: 'reversed', automargin: true },
+            margin: { l: 90, r: 16, t: 8, b: 90 }
+          })
+        };
+      });
+    };
+    mSel.addEventListener('change', function () {
+      var m = (f.data || [])[+mSel.value];
+      clear(sSel);
+      (m ? m.scopes : []).forEach(function (sc, i) { sSel.appendChild(h('option', { value: i, text: sc.scope })); });
+      draw();
+    });
+    sSel.addEventListener('change', draw);
+    // initialise the scope options for the default method
+    (function () {
+      var m = (f.data || [])[+mSel.value];
+      (m ? m.scopes : []).forEach(function (sc, i) { sSel.appendChild(h('option', { value: i, text: sc.scope })); });
+    })();
+    setTimeout(draw, 0);
+    return card;
+  }
+
   function nav(id) { activate(id, true); }
   function pickCol(T, cands) { for (var i = 0; i < cands.length; i++) if (T.cols.indexOf(cands[i]) >= 0) return cands[i]; return null; }
   var RUN = (DATA.settings && DATA.settings.run) || {};
@@ -894,6 +1302,87 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
     if (qcImgs.length) root.appendChild(h('div', { class: 'mt' }, card('Pipeline QC figures', qcImgs.length + ' images (pre / post filtering)', gallery(qcImgs, false))));
   });
 
+  // ---- Clustering (Loupe "clusters"-style overview: elbow + PCA + clusters) ----
+  tab('clustering', 'Clustering', function () {
+    return DATA.datasets.some(function (d) { return d.pca && d.pca.dims && d.pca.dims.length > 1; }) ||
+      DATA.datasets.some(function (d) { return catCols(d).length > 0; });
+  }, function (root) {
+    if (!DATA.datasets.length) { root.appendChild(emptyNote('No datasets in this report.')); return; }
+    var dsSel = datasetSelect();
+    if (dsSel) root.appendChild(h('div', { class: 'toolbar' }, dsSel));
+    var host = h('div', { class: 'stack' });
+    root.appendChild(host);
+    var lastClusterCol = null;
+    var draw = function () {
+      var d = ds();
+      clear(host);
+      var cats = catCols(d);
+      var clusterCol = lastClusterCol && cats.indexOf(lastClusterCol) >= 0 ? lastClusterCol
+        : (cats.indexOf('seurat_clusters') >= 0 ? 'seurat_clusters' : preferredGroup(d, cats));
+      lastClusterCol = clusterCol;
+      if (!clusterCol) {
+        host.appendChild(notice('This dataset has no categorical metadata to cluster by.'));
+        return;
+      }
+      // Row 1: elbow plot (interactive) + run info.
+      if (d.pca && d.pca.dims && d.pca.dims.length > 1) {
+        var elbowBox = plotBox('tall');
+        var infoHost = h('div', { class: 'stack' });
+        host.appendChild(h('div', { class: 'grid g-main' },
+          card('Elbow plot (PCA)', 'stdev per principal component; shaded band = dims used; hover for variance',
+            h('div', null, elbowBox, infoHost)),
+          h('section', { class: 'card' }, h('header', null, h('h3', { text: 'Dimensionality' })),
+            h('div', { class: 'stack' },
+              kv([['PCA dimensions stored', d.pca.dims.length],
+                  ['Dims used for clustering', d.pca.used_from && d.pca.used_to ? d.pca.used_from + '-' + d.pca.used_to : null],
+                  ['Variance in used dims', d.pca.used_var_pct !== undefined && d.pca.used_var_pct !== null ? d.pca.used_var_pct + '%' : null],
+                  ['Clustering reduction', d.pca.cluster_reduction || null],
+                  ['Embedding shown here', d.reduction.toUpperCase()],
+                  ['Clusters (' + clusterCol + ')', (d.meta[clusterCol] && d.meta[clusterCol].levels.length) || null]]),
+              h('p', { class: 'note', text: d.pca.cluster_reduction && d.pca.cluster_reduction !== 'pca'
+                ? 'Clustering ran on Harmony-corrected dimensions (' + d.pca.cluster_reduction + '); the elbow below is the raw PCA of this object, so treat it as indicative.'
+                : 'Clustering and this elbow use the same PCA space.' })))));
+        setTimeout(function () { elbowPlot(elbowBox, d.pca, { used_from: d.pca.used_from, used_to: d.pca.used_to, used_var_pct: d.pca.used_var_pct }); }, 0);
+      }
+      // Row 2: cluster UMAP + PCA scatter, both coloured by the cluster column.
+      var colSel = h('select', { 'aria-label': 'Colour clusters by' },
+        cats.map(function (c) { return h('option', { value: c, text: c }); }));
+      colSel.value = clusterCol;
+      colSel.addEventListener('change', function () { lastClusterCol = colSel.value; draw(); });
+      var umapBox = plotBox('tall'), legend = h('div', { class: 'legend' }), selRead = h('div');
+      var pcaBox = plotBox('tall');
+      var pcaSel = h('select', { 'aria-label': 'Colour PCA by' },
+        cats.map(function (c) { return h('option', { value: c, text: c }); }));
+      pcaSel.value = clusterCol;
+      pcaSel.addEventListener('change', function () { pcaScatter(pcaBox, d, { color: pcaSel.value }); });
+      host.appendChild(h('div', { class: 'grid g2' },
+        card('Clusters on the embedding', 'toggle clusters in the legend; lasso for a quick count',
+          h('div', null,
+            h('div', { class: 'toolbar' }, h('label', { class: 'field' }, 'Cluster column', colSel)),
+            umapBox, legend, selRead)),
+        card('PCA space (PC1 x PC2)', 'the same cells in PCA space',
+          h('div', null,
+            h('div', { class: 'toolbar' }, h('label', { class: 'field' }, 'Colour by', pcaSel)),
+            pcaBox))));
+      if (d.pcs && d.pcs.pc1 && d.pcs.pc1.length) {
+        setTimeout(function () { pcaScatter(pcaBox, d, { color: pcaSel.value }); }, 0);
+      } else {
+        setTimeout(function () { showNote(pcaBox, 'PC coordinates are not embedded for this dataset.'); }, 0);
+      }
+      setTimeout(function () { clusterUmap(umapBox, legend, selRead, d, clusterCol); }, 0);
+      // Row 3: cluster sizes (exact counts when the run saved them).
+      var sizeBox = plotBox('short'), sizeNote = h('p', { class: 'note' });
+      var res = groupSizeBars(sizeBox, d, clusterCol);
+      if (res && res.exact) sizeNote.textContent = 'Exact cell counts over all ' + fmtInt(d.facts ? d.facts.cells : d.cells.length) + ' cells.';
+      else sizeNote.textContent = 'Counts over the ' + fmtInt(d.cells.length) + ' cells embedded in this report.';
+      host.appendChild(h('div', { class: 'mt' }, card('Cells per ' + clusterCol, null,
+        h('div', null, sizeBox, sizeNote))));
+    };
+    draw();
+    onDataset(draw);
+    themeListeners.push(function () { if (document.body.contains(host)) draw(); });
+  });
+
   // ---- Embedding explorer
   tab('embedding', 'Embedding', function () { return DATA.datasets.length > 0; }, function (root) {
     var hidden = {}, sel = [], selSet = null, cache = {};
@@ -905,9 +1394,13 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
 
     function fillColor() {
       var d = ds(), cats = catCols(d), nums = numCols(d), genes = geneNames(d);
+      // Per-cell pathway scores (escape assays) are numeric metadata; group them
+      // under their own heading so the QC metrics stay findable.
+      var pathways = (d.pathway_cols || []).filter(function (k) { return nums.indexOf(k) >= 0; });
+      nums = nums.filter(function (k) { return pathways.indexOf(k) < 0; });
       clear(colorSel);
       var add = function (label, items) { if (items.length) colorSel.appendChild(h('optgroup', { label: label }, items.map(function (k) { return h('option', { value: k, text: k }); }))); };
-      add('Categories', cats); add('QC & numeric', nums); add('Genes', genes);
+      add('Categories', cats); add('QC & numeric', nums); add('Pathway scores', pathways); add('Genes', genes);
       colorSel.value = preferredGroup(d, cats) || (nums[0] || genes[0]);
       hidden = {}; sel = []; selSet = null; cache = {};
     }
@@ -1086,6 +1579,66 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
     fill(); draw();
   });
 
+  // ---- Correlation (gene pairs, gene-gene matrix, pipeline correlation tables) --
+  tab('correlation', 'Correlation', function () {
+    return DATA.datasets.some(function (d) { return d.n_corr_genes > 1 || d.n_genes_embedded > 1; }) ||
+      figuresOf('correlation').length > 0 || tablesOfKind(['correlation']).length > 0;
+  }, function (root) {
+    var hasGenes = DATA.datasets.some(function (d) { return d.n_genes_embedded > 1; });
+    if (DATA.datasets.length && hasGenes) {
+      var dsSel = datasetSelect();
+      var xSel = h('select', { 'aria-label': 'X gene' }), ySel = h('select', { 'aria-label': 'Y gene' });
+      var colorSel = h('select', { 'aria-label': 'Colour by' });
+      var scBox = plotBox('tall'), mxBox = plotBox('tall');
+      var fill = function () {
+        var d = ds(), genes = geneNames(d);
+        if (genes.length < 2) { showNote(scBox, 'Only ' + genes.length + ' gene(s) embedded in this report; the correlation view needs at least two.'); showNote(mxBox, ''); return false; }
+        var fillSel = function (sel, preferred) {
+          clear(sel);
+          genes.forEach(function (g) { sel.appendChild(h('option', { value: g, text: g })); });
+          sel.value = genes.indexOf(preferred) >= 0 ? preferred : genes[0];
+        };
+        // Default pair: the first two default genes, or the first two embedded.
+        var dg = (d.default_genes && d.default_genes.length >= 2) ? d.default_genes : genes.slice(0, 2);
+        fillSel(xSel, dg[0]); fillSel(ySel, dg[1]);
+        clear(colorSel);
+        catCols(d).forEach(function (c) { colorSel.appendChild(h('option', { value: c, text: c })); });
+        colorSel.value = preferredGroup(d) || '';
+        return true;
+      };
+      var draw = function () {
+        var d = ds();
+        if (xSel.value && ySel.value) corrScatter(scBox, d, { x: xSel.value, y: ySel.value, color: colorSel.value || null });
+        if (d.corr && d.corr.genes && d.corr.genes.length > 1) corrMatrix(mxBox, d.corr);
+        else showNote(mxBox, 'No gene-gene correlation matrix for this dataset.');
+      };
+      [xSel, ySel, colorSel].forEach(function (el) { el.addEventListener('change', draw); });
+      onDataset(function () { if (fill()) draw(); });
+      root.appendChild(h('div', { class: 'toolbar' }, dsSel,
+        h('label', { class: 'field' }, 'Gene X', xSel),
+        h('label', { class: 'field' }, 'Gene Y', ySel),
+        h('label', { class: 'field' }, 'Colour by', colorSel)));
+      root.appendChild(h('div', { class: 'grid g2' },
+        card('Gene-gene scatter', 'least-squares fit and Pearson r update with the selection', scBox),
+        card('Gene-gene correlation matrix', 'Pearson r over the genes embedded in this report', mxBox)));
+      fill(); draw();
+    }
+    var figs = figuresOf('correlation');
+    if (figs.length) root.appendChild(h('div', { class: 'mt grid g2' }, figureCards(figs)));
+    var corrTables = tablesOfKind(['correlation']);
+    if (corrTables.length) {
+      var host = h('div');
+      var sel = h('select', { 'aria-label': 'Correlation table', style: { maxWidth: 'min(520px, 100%)' } },
+        corrTables.map(function (t, i) { return h('option', { value: i, text: t.label }); }));
+      var show = function () { clear(host); var T = corrTables[+sel.value]; tableView(host, T, { filename: T.id }); };
+      sel.addEventListener('change', show);
+      root.appendChild(h('div', { class: 'mt' }, card('Correlation tables', 'the long-format tables behind the heatmaps above', h('div', null, h('label', { class: 'field' }, 'Table', sel), host))));
+      show();
+    } else if (!hasGenes && !figs.length) {
+      root.appendChild(notice('No correlation output: set genes$corr_genes_x / corr_genes_y in the configuration to compute gene-set correlations, or embed genes in the report.'));
+    }
+  });
+
   // ---- Markers & DE
   var DE_KINDS = ['markers_all', 'deg_sig', 'cluster_markers', 'pseudobulk_deg', 'explorer'];
   function deSets() {
@@ -1164,7 +1717,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
         'No ranked GSEA tables for MSigDB collection "' + ((DATA.settings && DATA.settings.gsea_collection) || 'H') + '". GSEA needs edgeR pseudobulk ranks, two conditions with biological replicates and gene sets; see the diagnostics and the Run tab.'));
     }
     var assays = uniq([].concat.apply([], DATA.datasets.map(function (d) { return (d.facts && d.facts.escape_assays) || []; })));
-    if (assays.length) notes.push(notice('Per-cell pathway-score assays in the saved objects: ' + assays.join(', ') + '.'));
+    if (assays.length) notes.push(notice('Per-cell pathway scores are embedded in this report (' + assays.join(', ') + ', MSigDB "' + ((DATA.settings && DATA.settings.gsea_collection) || 'H') + '"): see "Pathway scores on the embedding (per cell)" below, and the Pathway scores group in the Embedding tab colour-by menu.'));
     else if (!tablesOfKind(['escape']).length) notes.push(notice(RUN.escape === false ? 'Per-cell pathway scoring was disabled (escape$run = false).' : 'No escape assay or score table is available; check the escape / msigdb packages and the Run tab.'));
     if (notes.length) root.appendChild(h('div', { class: 'stack', style: { marginBottom: '12px' } }, notes));
     root.appendChild(h('div', { class: 'grid g2' }, figureCards(figuresOf('enrichment'), 'tall')));
@@ -1201,7 +1754,13 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
         var d = ds(), a = d.meta[stackSel.value], b = d.meta[xSel.value];
         if (!a || !b) { showNote(box, 'Needs two categorical columns.'); return; }
         var cnt = a.levels.map(function () { return b.levels.map(function () { return 0; }); });
-        for (var i = 0; i < d.cells.length; i++) cnt[a.codes[i]][b.codes[i]]++;
+        for (var i = 0; i < d.cells.length; i++) {
+          // Belt and braces: null codes (NA metadata) are mapped to an "NA"
+          // level in sparks_panel() now, but a stale report must not crash here.
+          if (a.codes[i] === null || a.codes[i] === undefined) continue;
+          if (b.codes[i] === null || b.codes[i] === undefined) continue;
+          cnt[a.codes[i]][b.codes[i]]++;
+        }
         var tot = b.levels.map(function (_, j) { return cnt.reduce(function (s, r) { return s + r[j]; }, 0); });
         var pct = modeSel.value === 'percent';
         stackedBars(box, b.levels, a.levels.map(function (lv, k) {
