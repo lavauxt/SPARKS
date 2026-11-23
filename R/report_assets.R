@@ -170,6 +170,18 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
 .mt { margin-top: 12px; }
 .shot img[data-pending] { opacity: 0; }
 .shot img { transition: opacity .15s; }
+
+/* ---- Tab guide: how to read the data on each tab ---- */
+.guide { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px;
+         font-size: 12.5px; color: var(--text-2); background: var(--surface);
+         border: 1px solid var(--ring); border-left: 3px solid var(--accent);
+         border-radius: 8px; padding: 8px 12px; }
+.guide .ic { flex: none; line-height: 1.35; color: var(--accent); font-weight: 600; }
+.guide b { color: var(--text); }
+.guide .ic::after { content: "i"; display: inline-block; width: 15px; height: 15px;
+                    border-radius: 50%; background: var(--accent-soft);
+                    color: var(--accent); font-size: 10.5px; font-style: italic;
+                    text-align: center; line-height: 15px; }
 )---"
 
 .SPARKS_REPORT_JS <- r"---(
@@ -399,6 +411,11 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
   function plotBox(cls) { return h('div', { class: 'plot ' + (cls || '') }); }
   function emptyNote(text) { return h('div', { class: 'empty', text: text }); }
   function notice(text, warn) { return h('p', { class: 'notice' + (warn ? ' warn' : ''), text: text }); }
+  // Short "how to read this tab" note rendered at the top of every panel.
+  // children: further nodes appended after the intro text (optional).
+  function guide(text, children) {
+    return h('div', { class: 'guide' }, h('span', { class: 'ic', 'aria-hidden': 'true' }), h('div', null, text, children || null));
+  }
 
   // ------------------------------------------------------------------ tables
   function colType(T, c) {
@@ -1053,38 +1070,105 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
   // columns). This is the per-cell analogue of gseaProjectionCard above (which
   // paints every cell of a group with the group's NES) and the pathway
   // counterpart of the Embedding tab's colour-by-gene.
+  // A "Show subcluster" slider picks ONE cluster of a categorical column
+  // (seurat_clusters / cell type / condition): the UMAP then scores only that
+  // subcluster, so all cells are coloured (never a whole-group NES repeated),
+  // and the colour scale is recomputed from the selected cells alone. "All"
+  // (the default) keeps every cell on one shared scale.
   function escapeProjectionCard(f, cls) {
     var shortName = function (p) { return p.replace(/^HALLMARK_/, '').replace(/\s*\[[^\]]*\]\s*$/, ''); };
     var sel = h('select', { 'aria-label': 'Pathway' },
       f.pathways.map(function (p) { return h('option', { value: p, text: shortName(p) }); }));
     var box = plotBox(cls || 'tall');
+    // -- subcluster slider ---------------------------------------------------
+    // level 0 = All (no filter); levels 1..N = the N levels of the chosen
+    // categorical column. The dropdown also jumps directly to a level.
+    var cats = (function () {
+      var d = dsAt(f.dataset_index);
+      return catCols(d).filter(function (k) { return (d.meta[k].levels || []).length > 0; });
+    })();
+    var catSel = cats.length ? h('select', { 'aria-label': 'Subcluster column' },
+      cats.map(function (c) { return h('option', { value: c, text: c }); })) : null;
+    var lvSel = h('select', { 'aria-label': 'Subcluster', style: { maxWidth: '160px' } });
+    var lvRange = h('input', { type: 'range', min: 0, max: 0, step: 1, value: 0, 'aria-label': 'Subcluster' });
+    var lvRangeLabel = h('span', { class: 'small', style: { whiteSpace: 'nowrap', color: 'var(--text-2)' }, text: 'All' });
+    var curLevels = null;
+    var fillLevels = function () {
+      if (!catSel) { clear(lvSel); lvRange.max = 0; lvRange.value = 0; lvRange.disabled = true; lvSel.disabled = true; return; }
+      var m = dsAt(f.dataset_index).meta[catSel.value];
+      curLevels = m ? m.levels : [];
+      lvRange.max = Math.max(0, curLevels.length);
+      lvRange.disabled = false; lvSel.disabled = false;
+      clear(lvSel);
+      lvSel.appendChild(h('option', { value: 0, text: 'All' }));
+      curLevels.forEach(function (lv, k) { lvSel.appendChild(h('option', { value: k + 1, text: lv })); });
+      syncFromRange();
+    };
+    var syncFromRange = function () {
+      var k = +lvRange.value;
+      if (lvSel.value !== String(k)) lvSel.value = String(Math.min(k, curLevels ? curLevels.length : 0));
+      lvRangeLabel.textContent = k < 1 || !curLevels ? 'All' : curLevels[k - 1];
+    };
+    var syncFromSelect = function () {
+      lvRange.value = lvSel.value; syncFromRange();
+    };
+    if (catSel) {
+      // sensible default: the column the Clustering tab would use
+      var pref = ['seurat_clusters', 'cluster', 'cell_type', 'celltype', 'singleR_labels_main', 'SingleR_main', 'condition', 'orig.ident'];
+      for (var pi = 0; pi < pref.length; pi++) if (cats.indexOf(pref[pi]) >= 0) { catSel.value = pref[pi]; break; }
+      catSel.addEventListener('change', function () { lvRange.value = 0; fillLevels(); draw(); });
+    }
+    lvRange.addEventListener('input', function () { syncFromRange(); drawSoon(); });
+    lvSel.addEventListener('change', function () { syncFromSelect(); draw(); });
+    var drawSoon = rafThrottle(function () { draw(); });
+    // -------------------------------------------------------------------------
     var card = h('section', { class: 'card' },
       h('header', null,
         h('h3', { text: f.title }),
         h('span', { class: 'muted small hint', text: (f.group || '') + ' - per-cell pathway scores, colour = low to high' })),
-      h('div', { class: 'toolbar' }, h('label', { class: 'field' }, 'Pathway', sel)),
+      h('div', { class: 'toolbar' },
+        h('label', { class: 'field' }, 'Pathway', sel),
+        catSel ? h('label', { class: 'field' }, 'Subcluster column', catSel) : null,
+        h('label', { class: 'field' }, 'Subcluster', h('div', { class: 'field inline', style: { flexWrap: 'nowrap' } }, lvRange, lvRangeLabel)),
+        h('label', { class: 'field' }, 'Jump to', lvSel)),
       box);
     var draw = function () {
       var ds = dsAt(f.dataset_index);
       var col = sel.value;
       if (!ds.meta[col]) { showNote(box, 'Pathway scores for "' + col + '" are not embedded in this report.'); return; }
       var v = numVec(ds, col), n = ds.cells.length;
-      var fin = v.filter(function (x) { return isFinite(x); });
+      // Index set of the subcluster currently chosen by the slider ("All" = every cell).
+      var lvl = +lvRange.value, chosen = null;
+      if (catSel && lvl > 0 && curLevels && lvl <= curLevels.length) {
+        chosen = curLevels[lvl - 1];
+      }
+      var keep = null;
+      if (chosen !== null) {
+        var codes = ds.meta[catSel.value].codes;
+        keep = new Uint8Array(n);
+        for (var i = 0; i < n; i++) if (codes[i] !== null && codes[i] !== undefined && ds.meta[catSel.value].levels[codes[i]] === chosen) keep[i] = 1;
+      }
+      var fin = [];
+      for (var j = 0; j < n; j++) if (!keep || keep[j]) { if (isFinite(v[j])) fin.push(v[j]); }
       if (!fin.length) { showNote(box, 'All scores are missing for this pathway.'); return; }
       var zmin = Math.min.apply(null, fin), zmax = Math.max.apply(null, fin);
       if (zmax - zmin < 1e-9) { zmax = zmin + 1; }
+      var shown = keep ? (function () { var c = 0; for (var q = 0; q < n; q++) if (keep[q]) c++; return c; })() : n;
       plot(box, function (t) {
         var type = n > 8000 ? 'scattergl' : 'scatter';
-        var text = ds.cells.map(function (cname, i) {
-          return cname + '<br>' + col + ': ' + (isFinite(v[i]) ? fmt(v[i]) : 'NA');
-        });
+        var xs = [], ys = [], text = [], cd = [], vals = [];
+        for (var i = 0; i < n; i++) {
+          if (keep && !keep[i]) continue;
+          var cname = ds.cells[i], grp = catSel ? (function (c) { return c === null || c === undefined ? 'NA' : (ds.meta[catSel.value].levels[c] || 'NA'); })(ds.meta[catSel.value].codes[i]) : null;
+          xs.push(ds.x[i]); ys.push(ds.y[i]); cd.push(cname); vals.push(isFinite(v[i]) ? v[i] : null);
+          text.push(cname + '<br>' + col + ': ' + (isFinite(v[i]) ? fmt(v[i]) : 'NA') + (grp ? '<br>' + catSel.value + ': ' + grp : ''));
+        }
         var data = [{
-          type: type, mode: 'markers', x: ds.x, y: ds.y, customdata: ds.cells,
+          type: type, mode: 'markers', x: xs, y: ys, customdata: cd,
           text: text, hoverinfo: 'text',
           marker: {
             size: 4, opacity: 0.85,
-            color: Array.prototype.map.call(v, function (x) { return isFinite(x) ? x : null; }),
-            cmin: zmin, cmax: zmax, colorscale: SEQ_SCALE,
+            color: vals, cmin: zmin, cmax: zmax, colorscale: SEQ_SCALE,
             colorbar: { title: { text: 'Score' }, thickness: 10, len: 0.6 }
           }
         }];
@@ -1096,11 +1180,13 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
           yaxis: { showgrid: false, zeroline: false, scaleanchor: 'x' },
           margin: { l: 48, r: 16, t: 8, b: 40 }
         });
-        L.uirevision = ds.id + '|escape|' + col;
+        L.title = { text: (chosen !== null ? chosen + ' only \u00b7 ' + fmtInt(shown) + ' of ' + fmtInt(n) + ' cells' : 'All cells \u00b7 ' + fmtInt(n) + ' cells'), font: { size: 12 }, x: 0, xanchor: 'left', y: 0.995, yanchor: 'top' };
+        L.uirevision = ds.id + '|escape|' + col + '|' + (chosen === null ? 'all' : chosen);
         return { data: data, layout: L };
       });
     };
     sel.addEventListener('change', draw);
+    fillLevels();
     setTimeout(draw, 0);
     return card;
   }
@@ -1185,6 +1271,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
 
   // ---- Overview
   tab('overview', 'Overview', function () { return true; }, function (root) {
+    root.appendChild(guide(h('span', null, 'One page per run: ', h('b', { text: 'tiles' }), ' are totals over all cells on disk (not the sampled cells embedded in this report); ', h('b', { text: 'top markers' }), ' lists each group\u2019s strongest marker genes by average log2 fold-change; ', h('b', { text: 'Jump to' }), ' navigates to the detailed tab for each analysis.')));
     var S = DATA.summary;
     var tiles = [['cells', 'Cells'], ['samples', 'Samples'], ['conditions', 'Conditions'], ['genes', 'Genes'], ['clusters', 'Clusters'], ['tables', 'Result tables'], ['files', 'Files']];
     root.appendChild(h('div', { class: 'tiles' }, tiles.filter(function (t) { return S[t[0]] !== null && S[t[0]] !== undefined; }).map(function (t) {
@@ -1234,6 +1321,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
     return figuresOf('qc').length > 0 || DATA.datasets.length > 0 || !!DATA.settings || !!(DATA.qc && DATA.qc.retention) ||
       DATA.images.some(function (i) { return i.category === 'QC'; });
   }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: each ', h('b', { text: 'violin' }), ' is the distribution of one QC metric per sample after filtering \u2014 wide violins or differing medians mean uneven library quality across samples; ', h('b', { text: 'percent.mt' }), ' rising with nCount_RNA suggests stressed or dying cells. The ', h('b', { text: 'retention table' }), ' compares cells before and after QC + doublet removal: a sample losing a large share was low-quality.')));
     var Sx = DATA.settings, top = [];
     if (Sx) {
       var q = Sx.qc || {};
@@ -1308,6 +1396,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
       DATA.datasets.some(function (d) { return catCols(d).length > 0; });
   }, function (root) {
     if (!DATA.datasets.length) { root.appendChild(emptyNote('No datasets in this report.')); return; }
+    root.appendChild(guide(h('span', null, 'How to read: the ', h('b', { text: 'elbow plot' }), ' shows the standard deviation of each principal component \u2014 clustering uses the components up to the shaded bend, where the curve flattens. On the ', h('b', { text: 'UMAP and PCA panels' }), ' each colour is one group of the selected column; compact, well-separated colours mean distinct populations. The ', h('b', { text: 'size bars' }), ' give cell counts per group (exact counts over all cells).')));
     var dsSel = datasetSelect();
     if (dsSel) root.appendChild(h('div', { class: 'toolbar' }, dsSel));
     var host = h('div', { class: 'stack' });
@@ -1385,6 +1474,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
 
   // ---- Embedding explorer
   tab('embedding', 'Embedding', function () { return DATA.datasets.length > 0; }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: every point is one cell placed on the ', h('b', { text: 'UMAP' }), ' (neighbourhood-preserving; distances between clusters are qualitative, not metric). ', h('b', { text: 'Colour by' }), ' any metadata, QC metric, ', h('b', { text: 'pathway score' }), ' or embedded ', h('b', { text: 'gene' }), ' (blue = low, dark = high). ', h('b', { text: 'Lasso' }), ' or box-select cells to break them down by category, compare genes, and export barcodes; legend entries hide a category.')));
     var hidden = {}, sel = [], selSet = null, cache = {};
     var plotDiv = plotBox('tall'), legend = h('div', { class: 'legend' });
     var colorSel = h('select', { 'aria-label': 'Colour by' }), size = h('input', { type: 'range', min: 1, max: 10, step: 0.5, value: 4, 'aria-label': 'Point size' });
@@ -1549,6 +1639,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
 
   // ---- Genes
   tab('genes', 'Genes', function () { return DATA.datasets.some(function (d) { return d.n_genes_embedded > 0; }); }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: ', h('b', { text: 'violins' }), ' show the log-normalised expression of one gene per group \u2014 the white dot is the mean, so a shifted dot means that group expresses the gene more. In the ', h('b', { text: 'dot plot' }), ' the dot\u2019s ', h('b', { text: 'size' }), ' is the share of cells expressing the gene and its ', h('b', { text: 'colour' }), ' is the scaled mean level; this only covers the genes embedded in the report, any other gene is available in the explorer app.')));
     var geneIn = h('input', { type: 'text', list: 'sparks-genes', 'aria-label': 'Gene', autocomplete: 'off' });
     var dl = h('datalist', { id: 'sparks-genes' });
     var groupSel = h('select', { 'aria-label': 'Group by' });
@@ -1584,6 +1675,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
     return DATA.datasets.some(function (d) { return d.n_corr_genes > 1 || d.n_genes_embedded > 1; }) ||
       figuresOf('correlation').length > 0 || tablesOfKind(['correlation']).length > 0;
   }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: the ', h('b', { text: 'scatter' }), ' plots one gene against another per cell (log-normalised); the line is the least-squares fit and ', h('b', { text: 'r' }), ' is Pearson correlation \u2014 lasso a region to recompute both on those cells only. The ', h('b', { text: 'heatmap' }), ' is the gene-gene correlation matrix: warm = co-expressed, cold = mutually exclusive.')));
     var hasGenes = DATA.datasets.some(function (d) { return d.n_genes_embedded > 1; });
     if (DATA.datasets.length && hasGenes) {
       var dsSel = datasetSelect();
@@ -1646,6 +1738,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
   }
   function summaryFor(T) { return DATA.tables.filter(function (s) { return s.kind === 'deg_summary' && s.summary_of === T.id; })[0]; }
   tab('de', 'Markers & DE', function () { return deSets().length > 0 || figuresOf('de').length > 0 || tablesOfKind(['deg_counts']).length > 0 || ranOff('deg'); }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: the ', h('b', { text: 'volcano plot' }), ' places one dot per gene \u2014 right of centre = higher in this group, left = lower; height = statistical confidence (log10 adj. p), colour marks the genes passing the thresholds below, which you can change live. A ', h('b', { text: 'marker' }), ' is a gene both strongly shifted (|log2FC|) and significant (adj. p). Pick a group and threshold, then read those genes off the table.')));
     if (ranOff('deg')) root.appendChild(h('div', { style: { marginBottom: '12px' } }, notice('Between-condition DEG was disabled (deg$run = false). Cluster markers, if present, are shown below.')));
     var sets = deSets();
     // Prefer the full table over its significant-only subset for the same analysis.
@@ -1705,6 +1798,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
     return figuresOf('enrichment').length > 0 || tablesOfKind(['gsea', 'escape']).length > 0 || !!(DATA.notes && DATA.notes.gsea_status) ||
       RUN.gsea === true || RUN.escape === true || DATA.datasets.some(function (d) { return d.facts && d.facts.escape_assays && d.facts.escape_assays.length; });
   }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: ', h('b', { text: 'GSEA' }), ' tables give one row per pathway and group \u2014 a positive ', h('b', { text: 'NES' }), ' with small ', h('b', { text: 'padj' }), ' means the pathway is up in that group (negative = down); the GSEA projection repeats a group\u2019s NES across its cells. ', h('b', { text: 'Pathway scores (per cell)' }), ' instead colour each cell by its own UCell/AUCell score \u2014 compare which subcluster runs the pathway with the ', h('b', { text: 'Subcluster slider' }), ': drag it (or pick a level from the dropdown) to score one cluster at a time; \u201cAll\u201d keeps every cell on one shared scale.')));
     var notes = [];
     var st = DATA.notes && DATA.notes.gsea_status;
     if (st) {
@@ -1735,6 +1829,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
 
   // ---- Composition
   tab('composition', 'Composition', function () { return DATA.datasets.length > 0 || figuresOf('composition').length > 0 || tablesOfKind(['proportions', 'prop_test']).length > 0; }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: each bar is one ', h('b', { text: 'sample' }), ' or ', h('b', { text: 'condition' }), ' stacked by the cell groups of the chosen column \u2014 compare bar shapes to spot a cell type gained or lost between conditions (work in ', h('b', { text: 'Proportions (%)' }), ' so bars of unequal totals are comparable, ', h('b', { text: 'counts' }), ' to see library sizes). The ', h('b', { text: 'proportion tests' }), ' below flag group shifts that hold across replicate samples.')));
     if (DATA.datasets.length) {
       var dsSel = datasetSelect(), box = plotBox('tall');
       var stackSel = h('select', { 'aria-label': 'Stack by' }), xSel = h('select', { 'aria-label': 'Compare across' });
@@ -1795,6 +1890,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
 
   // ---- All tables
   tab('tables', 'Tables', function () { return DATA.tables.length > 0; }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: pick a ', h('b', { text: 'kind' }), ' and a table \u2014 these are exactly the TSV files the pipeline wrote, so column names and rows match the results folder. Use the filter box to find a gene or group, sort by clicking a column header, and ', h('b', { text: 'Download CSV' }), ' to export what you see. Very large tables are truncated here; the file on disk is complete.')));
     var kinds = uniq(DATA.tables.map(function (t) { return t.kind; }));
     var kindSel = h('select', { 'aria-label': 'Kind' }, kinds.map(function (k) { return h('option', { value: k, text: (DATA.kind_labels[k] || k) + ' (' + DATA.tables.filter(function (t) { return t.kind === k; }).length + ')' }); }));
     var tSel = h('select', { 'aria-label': 'Table', style: { maxWidth: 'min(520px, 100%)' } }), host = h('div');
@@ -1856,12 +1952,14 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
     if (lightbox.showModal) lightbox.showModal();
   }
   tab('figures', 'Figures', function () { return DATA.images.length > 0; }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: every static PNG the pipeline wrote, grouped by ', h('b', { text: 'category' }), ' (QC, clustering\u2026) and ', h('b', { text: 'analysis' }), '. Click a thumbnail to enlarge it; filter by label text to find one figure. Not-embedded figures are too large for the single-file report and open from the results folder instead.')));
     var embedded = DATA.images.filter(function (i) { return i.embedded; }).length;
     root.appendChild(card('Pipeline figures', embedded + ' embedded of ' + DATA.images.length + (embedded < DATA.images.length ? ' (the rest are linked)' : ''), gallery(DATA.images, true)));
   });
 
   // ---- Files
   tab('files', 'Files', function () { return DATA.files && DATA.files.rel && DATA.files.rel.length > 0; }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: the complete list of result files with kind, category and size \u2014 file names link to the actual files while this report sits next to the results folder (the links break if the report is moved away). Use this to find which TSV / RDS / PNG backs any view in the other tabs.')));
     var F = DATA.files;
     var T = makeTable(['file', 'kind', 'category', 'size'], { file: F.rel, kind: F.kind, category: F.category, size: F.size });
     var host = h('div');
@@ -1873,6 +1971,7 @@ dialog.lightbox img { max-width: 96vw; max-height: 92vh; background: #fff; borde
 
   // ---- Run
   tab('run', 'Run', function () { return true; }, function (root) {
+    root.appendChild(guide(h('span', null, 'How to read: the audit trail of the run \u2014 ', h('b', { text: 'diagnostics' }), ' lists warnings, errors and analyses skipped (with the reason), the ', h('b', { text: 'configuration used' }), ' records every setting the run actually applied, and the ', h('b', { text: 'log tail' }), ' and ', h('b', { text: 'session info' }), ' capture how the run ended and with which package versions.')));
     var R = DATA.run, blocks = [];
     var D = R.diagnostics;
     if (D && D.message && D.message.length) {
